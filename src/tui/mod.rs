@@ -14,15 +14,7 @@ use ratatui::{
 };
 use std::{io, time::Duration};
 use crate::core::GitRepo;
-use crate::models::{CommitInfo, LabelInfo};
-
-// --- [ Style Constants ] ---
-const COLOR_HEAD: Color = Color::Cyan;
-const COLOR_LOCAL_BRANCH: Color = Color::Green;
-const COLOR_REMOTE_BRANCH: Color = Color::Red;
-const COLOR_TAG: Color = Color::Yellow;
-const COLOR_HASH: Color = Color::DarkGray;
-const COLOR_ERROR: Color = Color::LightRed;
+use crate::utils::tui_graph::{TuiGraphRenderer, GraphRow};
 
 pub fn run_tree_explorer(repo: GitRepo, filter: Option<String>) -> Result<()> {
     enable_raw_mode()?;
@@ -45,19 +37,14 @@ pub fn run_tree_explorer(repo: GitRepo, filter: Option<String>) -> Result<()> {
     if let Err(err) = res {
         println!("Fatal Error: {:?}", err);
     }
-
     Ok(())
 }
 
-enum InputMode {
-    Normal,
-    Search,
-    Jump,
-}
+enum InputMode { Normal, Search, Jump }
 
 struct App {
     repo: GitRepo,
-    commits: Vec<CommitInfo>,
+    graph_rows: Vec<GraphRow>,
     state: ListState,
     detail_visible: bool,
     input_mode: InputMode,
@@ -73,11 +60,16 @@ impl App {
         } else {
             repo.get_commits(100)?
         };
+        
+        let mut renderer = TuiGraphRenderer::new();
+        let graph_rows = renderer.compute_rows(&commits);
+        
         let mut state = ListState::default();
         state.select(Some(0));
+        
         Ok(Self {
             repo,
-            commits,
+            graph_rows,
             state,
             detail_visible: true,
             input_mode: InputMode::Normal,
@@ -88,49 +80,65 @@ impl App {
     }
 
     fn refresh_commits(&mut self) -> Result<()> {
-        self.commits = if let Some(ref q) = self.active_filter {
+        let commits = if let Some(ref q) = self.active_filter {
             self.repo.filter_commits(q)?
         } else {
             self.repo.get_commits(100)?
         };
+        let mut renderer = TuiGraphRenderer::new();
+        self.graph_rows = renderer.compute_rows(&commits);
         self.state.select(Some(0));
         Ok(())
     }
 
     fn next(&mut self) {
-        if self.commits.is_empty() { return; }
+        if self.graph_rows.is_empty() { return; }
         let i = match self.state.selected() {
-            Some(i) => if i >= self.commits.len() - 1 { 0 } else { i + 1 },
+            Some(i) => if i >= self.graph_rows.len() - 1 { 0 } else { i + 1 },
             None => 0,
         };
         self.state.select(Some(i));
     }
 
     fn previous(&mut self) {
-        if self.commits.is_empty() { return; }
+        if self.graph_rows.is_empty() { return; }
         let i = match self.state.selected() {
-            Some(i) => if i == 0 { self.commits.len() - 1 } else { i - 1 },
+            Some(i) => if i == 0 { self.graph_rows.len() - 1 } else { i - 1 },
             None => 0,
         };
         self.state.select(Some(i));
     }
 
-    fn toggle_detail(&mut self) {
-        self.detail_visible = !self.detail_visible;
+    fn page_down(&mut self) {
+        if self.graph_rows.is_empty() { return; }
+        let i = match self.state.selected() {
+            Some(i) => (i + 15).min(self.graph_rows.len() - 1),
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
+
+    fn page_up(&mut self) {
+        if self.graph_rows.is_empty() { return; }
+        let i = match self.state.selected() {
+            Some(i) => i.saturating_sub(15),
+            None => 0,
+        };
+        self.state.select(Some(i));
     }
 
     fn jump_to_ref(&mut self, reference: &str) {
         match self.repo.resolve_ref(reference) {
             Ok(hash) => {
-                if let Some(index) = self.commits.iter().position(|c| c.hash == hash || c.hash.starts_with(&hash)) {
+                if let Some(index) = self.graph_rows.iter().position(|r| r.commit.hash == hash || r.commit.hash.starts_with(&hash)) {
                     self.state.select(Some(index));
                     self.status_message = Some((format!("Jumped to {}", &hash[..7]), Color::Gray));
                 } else {
-                    self.status_message = Some((format!("Ref resolved to {} but not in current list", &hash[..7]), COLOR_ERROR));
+                    self.status_message = Some((format!("Ref {} not found in current view", &hash[..7]), Color::Red));
                 }
             }
             Err(_) => {
-                self.status_message = Some((format!("Reference '{}' not found", reference), COLOR_ERROR));
+                self.status_message = Some((format!("Reference '{}' not found", reference), Color::Red));
             }
         }
     }
@@ -144,10 +152,14 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
             if let Event::Key(key) = event::read()? {
                 match app.input_mode {
                     InputMode::Normal => match key.code {
-                        KeyCode::Char('q') => return Ok(()),
+                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                         KeyCode::Down | KeyCode::Char('j') => app.next(),
                         KeyCode::Up | KeyCode::Char('k') => app.previous(),
-                        KeyCode::Char('d') => app.toggle_detail(),
+                        KeyCode::PageDown => app.page_down(),
+                        KeyCode::PageUp => app.page_up(),
+                        KeyCode::Home => app.state.select(Some(0)),
+                        KeyCode::End => app.state.select(Some(app.graph_rows.len().saturating_sub(1))),
+                        KeyCode::Char('d') => app.detail_visible = !app.detail_visible,
                         KeyCode::Char('/') | KeyCode::Char('f') => {
                             app.input_mode = InputMode::Search;
                             app.input_buffer.clear();
@@ -155,10 +167,6 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                         KeyCode::Char('J') => {
                             app.input_mode = InputMode::Jump;
                             app.input_buffer.clear();
-                        }
-                        KeyCode::Esc => {
-                            app.active_filter = None;
-                            let _ = app.refresh_commits();
                         }
                         _ => {}
                     },
@@ -198,63 +206,38 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     let body_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints(
-            if app.detail_visible {
-                [Constraint::Percentage(50), Constraint::Percentage(50)]
-            } else {
-                [Constraint::Percentage(100), Constraint::Percentage(0)]
-            }
-        )
+        .constraints(if app.detail_visible { [Constraint::Percentage(60), Constraint::Percentage(40)] } else { [Constraint::Percentage(100), Constraint::Percentage(0)] })
         .split(main_chunks[0]);
 
     render_commit_list(f, app, body_chunks[0]);
-
     if app.detail_visible {
         render_commit_detail(f, app, body_chunks[1]);
     }
-
     render_status_bar(f, app, main_chunks[1]);
 }
 
 fn render_commit_list(f: &mut Frame, app: &mut App, area: Rect) {
-    let items: Vec<ListItem> = app.commits.iter().map(|c| {
-        let hash_span = Span::styled(
-            format!("[{}] ", if c.hash.len() > 7 { &c.hash[..7] } else { &c.hash }),
-            Style::default().fg(COLOR_HASH)
-        );
-        
-        let mut spans = vec![hash_span];
-        
-        for label in &c.labels {
-            let (text, color) = match label {
-                LabelInfo::Head(n) => (n, COLOR_HEAD),
-                LabelInfo::LocalBranch(n) => (n, COLOR_LOCAL_BRANCH),
-                LabelInfo::RemoteBranch(n) => (n, COLOR_REMOTE_BRANCH),
-                LabelInfo::Tag(n) => (n, COLOR_TAG),
-            };
-            spans.push(Span::styled(format!("({}) ", text), Style::default().fg(color).add_modifier(Modifier::BOLD)));
-        }
-
-        spans.push(Span::raw(&c.subject));
-        
-        ListItem::new(Line::from(spans))
+    let selected_idx = app.state.selected().unwrap_or(0);
+    let items: Vec<ListItem> = app.graph_rows.iter().enumerate().map(|(idx, r)| {
+        ListItem::new(r.render(idx == selected_idx))
     }).collect();
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(" Commit Tree "))
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .highlight_symbol(">> ");
+        .block(Block::default().borders(Borders::ALL).title(" Commit Graph "))
+        .highlight_style(Style::default().bg(Color::Indexed(237)).add_modifier(Modifier::BOLD)) // Highlight background like IDE
+        .highlight_symbol("→ ");
 
     f.render_stateful_widget(list, area, &mut app.state);
 }
 
 fn render_commit_detail(f: &mut Frame, app: &mut App, area: Rect) {
     let i = app.state.selected().unwrap_or(0);
-    if let Some(commit) = app.commits.get(i) {
+    if let Some(row) = app.graph_rows.get(i) {
+        let commit = &row.commit;
         let text = vec![
-            Line::from(vec![Span::styled("Hash:   ", Style::default().fg(Color::Gray)), Span::raw(&commit.hash)]),
-            Line::from(vec![Span::styled("Author: ", Style::default().fg(Color::Gray)), Span::raw(&commit.author)]),
-            Line::from(vec![Span::styled("TS:     ", Style::default().fg(Color::Gray)), Span::raw(commit.date.to_string())]),
+            Line::from(vec![Span::styled("Hash:   ", Style::default().fg(Color::DarkGray)), Span::raw(&commit.hash)]),
+            Line::from(vec![Span::styled("Author: ", Style::default().fg(Color::DarkGray)), Span::raw(&commit.author)]),
+            Line::from(vec![Span::styled("Date:   ", Style::default().fg(Color::DarkGray)), Span::raw(commit.date.to_string())]),
             Line::from(""),
             Line::from(vec![Span::styled("Subject: ", Style::default().add_modifier(Modifier::BOLD))]),
             Line::from(commit.subject.as_str()),
@@ -264,7 +247,7 @@ fn render_commit_detail(f: &mut Frame, app: &mut App, area: Rect) {
         ];
 
         let p = Paragraph::new(text)
-            .block(Block::default().borders(Borders::ALL).title(" Commit Detail "))
+            .block(Block::default().borders(Borders::ALL).title(" Commit Info "))
             .wrap(Wrap { trim: true });
         f.render_widget(p, area);
     }
@@ -273,16 +256,12 @@ fn render_commit_detail(f: &mut Frame, app: &mut App, area: Rect) {
 fn render_status_bar(f: &mut Frame, app: &mut App, area: Rect) {
     let (prompt, color) = match app.input_mode {
         InputMode::Normal => {
-            if let Some((msg, col)) = &app.status_message {
-                (msg.clone(), *col)
-            } else if let Some(filter) = &app.active_filter {
-                (format!("Filter: {}", filter), Color::Cyan)
-            } else {
-                ("q:quit | /:filter | J:jump | d:detail | Esc:clear filter".to_string(), Color::DarkGray)
-            }
+            if let Some((msg, col)) = &app.status_message { (msg.clone(), *col) }
+            else if let Some(filter) = &app.active_filter { (format!("Filter: {}", filter), Color::Cyan) }
+            else { ("q:quit | arrows/jk:scroll | PgUp/PgDn:scroll | Home/End | d:detail | /:filter | J:jump".to_string(), Color::DarkGray) }
         }
-        InputMode::Search => (format!("Search: {}_", app.input_buffer), Color::Yellow),
-        InputMode::Jump => (format!("Jump to (branch/tag/hash): {}_", app.input_buffer), Color::Magenta),
+        InputMode::Search => (format!("Search index: {}_", app.input_buffer), Color::Yellow),
+        InputMode::Jump => (format!("Jump to ref: {}_", app.input_buffer), Color::Magenta),
     };
 
     let p = Paragraph::new(prompt)
