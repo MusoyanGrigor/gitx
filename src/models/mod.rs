@@ -20,22 +20,8 @@ pub enum LabelInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BranchInfo {
-    pub name: String,
-    pub is_remote: bool,
-    pub is_head: bool,
-    pub last_commit: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComparisonResult {
     pub base_hash: String,
     pub unique_to_a: Vec<CommitInfo>,
     pub unique_to_b: Vec<CommitInfo>,
-}
-
-pub enum RefType {
-    Branch(String),
-    Tag(String),
-    Commit(String),
 }
