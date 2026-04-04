@@ -34,11 +34,3 @@ pub enum ResetMode {
     Hard,
 }
 
-impl UndoPlan {
-    pub fn is_empty(&self) -> bool {
-        self.staged_files.is_empty() 
-            && self.unstaged_files.is_empty() 
-            && self.untracked_files.is_empty() 
-            && self.last_commit.is_none()
-    }
-}
