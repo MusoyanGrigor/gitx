@@ -17,6 +17,10 @@ impl GraphRenderer {
             return;
         }
 
+        // Pre-scan to find max lanes for alignment
+        let max_lanes = self.calculate_max_lanes(commits);
+        let graph_width = (max_lanes * 3).max(6); // At least some space
+
         println!(); // Spacing
 
         for (idx, commit) in commits.iter().enumerate() {
@@ -37,20 +41,15 @@ impl GraphRenderer {
                 }
             }
             for p in added_parents {
-                if let Some(empty_idx) = next_lanes.iter().position(|l| l.is_none()) {
-                    next_lanes[empty_idx] = Some(p);
-                } else {
-                    next_lanes.push(Some(p));
-                }
+                let pos = next_lanes.iter().position(|l| l.is_none()).unwrap_or(next_lanes.len());
+                if pos == next_lanes.len() { next_lanes.push(Some(p)); } 
+                else { next_lanes[pos] = Some(p); }
             }
 
-            // 3. Main Commit Line
-            self.render_node_row(commit, node_lane);
-            
-            // 4. Metadata Line
-            self.render_metadata_row(commit, node_lane, &next_lanes);
+            // Render COMPACT One-Line layout
+            self.render_compact_row(commit, node_lane, graph_width);
 
-            // 5. Connectors
+            // Connectors (subtle)
             if !is_last {
                 self.render_connector_row(&next_lanes, node_lane, &commit.parents);
             }
@@ -60,6 +59,39 @@ impl GraphRenderer {
         }
         
         println!(); // Spacing
+    }
+
+    fn calculate_max_lanes(&self, commits: &[CommitInfo]) -> usize {
+        // Simple heuristic for pre-scan
+        let mut temp_lanes: Vec<Option<String>> = self.active_lanes.clone();
+        let mut max = temp_lanes.len();
+        
+        for commit in commits {
+            // This is a rough simulation
+            let node_lane = if let Some(pos) = temp_lanes.iter().position(|l| l.as_ref() == Some(&commit.hash)) {
+                pos
+            } else {
+                let pos = temp_lanes.iter().position(|l| l.is_none()).unwrap_or(temp_lanes.len());
+                if pos == temp_lanes.len() { temp_lanes.push(Some(commit.hash.clone())); } 
+                else { temp_lanes[pos] = Some(commit.hash.clone()); }
+                pos
+            };
+            
+            temp_lanes[node_lane] = None;
+            for (i, p) in commit.parents.iter().enumerate() {
+                if !temp_lanes.iter().any(|l| l.as_ref() == Some(p)) {
+                    if i == 0 { temp_lanes[node_lane] = Some(p.clone()); } 
+                    else {
+                        let pos = temp_lanes.iter().position(|l| l.is_none()).unwrap_or(temp_lanes.len());
+                        if pos == temp_lanes.len() { temp_lanes.push(Some(p.clone())); } 
+                        else { temp_lanes[pos] = Some(p.clone()); }
+                    }
+                }
+            }
+            max = max.max(temp_lanes.len());
+            while temp_lanes.last().map_or(false, |l| l.is_none()) { temp_lanes.pop(); }
+        }
+        max
     }
 
     fn get_or_assign_lane(&mut self, hash: &str) -> usize {
@@ -76,77 +108,60 @@ impl GraphRenderer {
         }
     }
 
-    fn render_node_row(&self, commit: &CommitInfo, node_lane: usize) {
+    fn render_compact_row(&self, commit: &CommitInfo, node_lane: usize, graph_width: usize) {
         let is_head = commit.labels.iter().any(|l| matches!(l, LabelInfo::Head(_)));
         let is_merge = commit.parents.len() > 1;
-        let node_style = if is_head { 
-            TreeStyle::head_node() 
-        } else if is_merge {
-            TreeStyle::merge_node()
-        } else { 
-            TreeStyle::commit_node() 
-        };
-        let node_char = if is_head { "●" } else { "●" }; // Same char but different style
         
-        let mut graph = String::new();
+        let node_style = if is_head { TreeStyle::head_node() } 
+                         else if is_merge { TreeStyle::merge_node() }
+                         else { TreeStyle::commit_node() };
+        
+        // 1. Build graph prefix
+        let mut prefix = String::new();
         for (i, lane) in self.active_lanes.iter().enumerate() {
             if i == node_lane {
-                graph.push_str(&styled(node_char, node_style));
+                prefix.push_str(&styled("●", node_style));
             } else if lane.is_some() {
-                graph.push_str(&styled("│", TreeStyle::connector()));
+                prefix.push_str(&styled("│", TreeStyle::connector()));
             } else {
-                graph.push(' ');
+                prefix.push(' ');
             }
-            graph.push_str("  ");
+            prefix.push_str("  ");
         }
         
+        // Pad graph area
+        let prefix_len = self.active_lanes.len() * 3;
+        if prefix_len < graph_width {
+            for _ in 0..(graph_width - prefix_len) { prefix.push(' '); }
+        }
+
+        // 2. Format Hash & Subject
         let hash_short = if commit.hash.len() > 7 { &commit.hash[..7] } else { &commit.hash };
+        let subject = &commit.subject;
         
-        println!("{} {}  {}", 
-            graph, 
-            styled(hash_short, TreeStyle::hash()), 
-            styled(&commit.subject, TreeStyle::subject())
-        );
-    }
-
-    fn render_metadata_row(&self, commit: &CommitInfo, node_lane: usize, next_lanes: &[Option<String>]) {
-        let mut graph = String::new();
-        for (i, lane) in self.active_lanes.iter().enumerate() {
-            let next_exists = next_lanes.get(i).map_or(false, |l| l.is_some());
-            if i == node_lane && next_exists {
-                graph.push_str(&styled("│", TreeStyle::connector()));
-            } else if lane.is_some() && next_exists {
-                graph.push_str(&styled("│", TreeStyle::connector()));
-            } else {
-                graph.push(' ');
-            }
-            graph.push_str("  ");
-        }
-
+        // 3. Metadata & Refs
         let date_str = self.format_date(commit.date);
-        let refs_str = self.format_labels_ide(&commit.labels);
+        let refs_str = self.format_labels_compact(&commit.labels);
         
-        print!("{} {} {} {}", 
-            graph, 
+        // 4. Combined output
+        println!("{} {}  {:<40}  {} {} {} {}", 
+            prefix, 
+            styled(hash_short, TreeStyle::hash()), 
+            styled(subject, TreeStyle::subject()),
             styled(&commit.author, TreeStyle::metadata()), 
             styled("•", TreeStyle::separator()),
-            styled(date_str, TreeStyle::metadata())
+            styled(date_str, TreeStyle::metadata()),
+            refs_str
         );
-        
-        if !refs_str.is_empty() {
-             print!(" {} {}", styled("•", TreeStyle::separator()), refs_str);
-        }
-        println!();
     }
 
     fn render_connector_row(&self, next_lanes: &[Option<String>], node_lane: usize, parents: &[String]) {
-        let connector_style = TreeStyle::connector();
-        
+        let style = TreeStyle::connector();
         if parents.is_empty() {
             if next_lanes.iter().any(|l| l.is_some()) {
                 let mut graph = String::new();
                 for lane in next_lanes.iter() {
-                    if lane.is_some() { graph.push_str(&styled("│", connector_style)); } 
+                    if lane.is_some() { graph.push_str(&styled("│", style)); } 
                     else { graph.push(' '); }
                     graph.push_str("  ");
                 }
@@ -160,59 +175,40 @@ impl GraphRenderer {
 
         for (i, _) in self.active_lanes.iter().enumerate() {
             if i == node_lane {
-                if is_merge {
-                    graph.push_str(&styled("├─╮", connector_style));
-                } else if next_lanes.get(i).map_or(false, |l| l.is_some()) {
-                    graph.push_str(&styled("│  ", connector_style));
-                } else {
-                    graph.push_str("   ");
-                }
+                if is_merge { graph.push_str(&styled("├─╮", style)); } 
+                else if next_lanes.get(i).map_or(false, |l| l.is_some()) { graph.push_str(&styled("│  ", style)); } 
+                else { graph.push_str("   "); }
             } else {
                 let current_exists = self.active_lanes[i].is_some();
                 let next_exists = next_lanes.get(i).map_or(false, |l| l.is_some());
-                
-                if current_exists && next_exists {
-                    graph.push_str(&styled("│  ", connector_style));
-                } else if current_exists && !next_exists {
-                    graph.push_str(&styled("╰─╮", connector_style));
-                } else if !current_exists && next_exists {
-                    graph.push_str(&styled("  │", connector_style));
-                } else {
-                    graph.push_str("   ");
-                }
+                if current_exists && next_exists { graph.push_str(&styled("│  ", style)); } 
+                else if current_exists && !next_exists { graph.push_str(&styled("╰─╮", style)); } 
+                else if !current_exists && next_exists { graph.push_str(&styled("  │", style)); } 
+                else { graph.push_str("   "); }
             }
         }
         println!("{}", graph);
     }
 
     fn trim_lanes(&mut self) {
-        while self.active_lanes.last().map_or(false, |l| l.is_none()) {
-            self.active_lanes.pop();
-        }
+        while self.active_lanes.last().map_or(false, |l| l.is_none()) { self.active_lanes.pop(); }
     }
 
     fn format_date(&self, timestamp: i64) -> String {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
         let diff = now.saturating_sub(timestamp as u64);
-        
-        if diff < 60 { "just now".into() }
-        else if diff < 3600 { format!("{}m ago", diff / 60) }
-        else if diff < 86400 { format!("{}h ago", diff / 3600) }
-        else if diff < 2592000 { format!("{} days ago", diff / 86400) }
-        else { format!("{} months ago", diff / 2592000) }
+        if diff < 60 { "now".into() }
+        else if diff < 3600 { format!("{}m", diff / 60) }
+        else if diff < 86400 { format!("{}h", diff / 3600) }
+        else if diff < 2592000 { format!("{}d", diff / 86400) }
+        else { format!("{}mo", diff / 2592000) }
     }
 
-    fn format_labels_ide(&self, labels: &[LabelInfo]) -> String {
+    fn format_labels_compact(&self, labels: &[LabelInfo]) -> String {
         if labels.is_empty() { return String::new(); }
         let mut parts = Vec::new();
-        
         let mut head_ref = None;
-        for l in labels {
-            if let LabelInfo::Head(n) = l { head_ref = Some(n.clone()); }
-        }
+        for l in labels { if let LabelInfo::Head(n) = l { head_ref = Some(n.clone()); } }
 
         for l in labels {
             match l {
@@ -224,22 +220,13 @@ impl GraphRenderer {
                         parts.push(styled(n, TreeStyle::local_branch_badge()));
                     }
                 },
-                LabelInfo::RemoteBranch(n) => {
-                    parts.push(styled(format!("origin/{}", n), TreeStyle::remote_branch_badge()));
-                },
-                LabelInfo::Tag(n) => {
-                    parts.push(styled(format!("tag:{}", n), TreeStyle::tag_badge()));
-                },
+                LabelInfo::RemoteBranch(n) => { parts.push(styled(format!("origin/{}", n), TreeStyle::remote_branch_badge())); },
+                LabelInfo::Tag(n) => { parts.push(styled(format!("tag:{}", n), TreeStyle::tag_badge())); },
             }
         }
-        
-        if parts.is_empty() && head_ref.is_some() {
-             // Only HEAD ref exists (detached or head on hash)
-             parts.push(styled("HEAD", TreeStyle::head_badge()));
-        }
-
+        if parts.is_empty() && head_ref.is_some() { parts.push(styled("HEAD", TreeStyle::head_badge())); }
         if parts.is_empty() { return String::new(); }
-        parts.join(&styled(" | ", TreeStyle::ref_divider()))
+        format!("{} {}", styled("•", TreeStyle::separator()), parts.join(&styled(" | ", TreeStyle::ref_divider())))
     }
 }
 
@@ -260,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn test_styled_history() {
+    fn test_compact_history() {
         let mut renderer = GraphRenderer::new();
         let commits = vec![
             mock_commit("C", vec!["B"]),
