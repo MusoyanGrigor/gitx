@@ -1,4 +1,6 @@
 use crate::models::{CommitInfo, LabelInfo};
+use crate::utils::styles::{TreeStyle, styled};
+use crossterm::style::Stylize;
 
 pub struct GraphRenderer {
     active_lanes: Vec<Option<String>>,
@@ -11,19 +13,16 @@ impl GraphRenderer {
 
     pub fn render(&mut self, commits: &[CommitInfo]) {
         if commits.is_empty() {
-            println!("No commits found.");
+            println!("{}", "No commits found.".dark_grey());
             return;
         }
 
-        println!(); // Extra spacing above
+        println!(); // Spacing
 
         for (idx, commit) in commits.iter().enumerate() {
             let is_last = idx == commits.len() - 1;
-            
-            // 1. Find or assign lane for the current commit
             let node_lane = self.get_or_assign_lane(&commit.hash);
             
-            // 2. Determine state for next rows
             let mut next_lanes = self.active_lanes.clone();
             next_lanes[node_lane] = None;
             
@@ -37,7 +36,6 @@ impl GraphRenderer {
                     }
                 }
             }
-            
             for p in added_parents {
                 if let Some(empty_idx) = next_lanes.iter().position(|l| l.is_none()) {
                     next_lanes[empty_idx] = Some(p);
@@ -46,23 +44,22 @@ impl GraphRenderer {
                 }
             }
 
-            // 3. Render the primary commit line with MODERN Unicode
+            // 3. Main Commit Line
             self.render_node_row(commit, node_lane);
             
-            // 4. Render secondary metadata line (author, date, refs)
+            // 4. Metadata Line
             self.render_metadata_row(commit, node_lane, &next_lanes);
 
-            // 5. Render connector / transition row (unless it's the very last line)
+            // 5. Connectors
             if !is_last {
                 self.render_connector_row(&next_lanes, node_lane, &commit.parents);
             }
             
-            // 6. Update state
             self.active_lanes = next_lanes;
             self.trim_lanes();
         }
         
-        println!(); // Extra spacing below
+        println!(); // Spacing
     }
 
     fn get_or_assign_lane(&mut self, hash: &str) -> usize {
@@ -80,12 +77,16 @@ impl GraphRenderer {
     }
 
     fn render_node_row(&self, commit: &CommitInfo, node_lane: usize) {
+        let is_head = commit.labels.iter().any(|l| matches!(l, LabelInfo::Head(_)));
+        let node_style = if is_head { TreeStyle::head_node() } else { TreeStyle::commit_node() };
+        let node_char = if is_head { "●" } else { "●" }; // Same char but different style
+        
         let mut graph = String::new();
         for (i, lane) in self.active_lanes.iter().enumerate() {
             if i == node_lane {
-                graph.push_str("\x1b[35m●\x1b[0m"); // Purple node
+                graph.push_str(&styled(node_char, node_style));
             } else if lane.is_some() {
-                graph.push_str("\x1b[90m│\x1b[0m"); // Gray vertical
+                graph.push_str(&styled("│", TreeStyle::connector()));
             } else {
                 graph.push(' ');
             }
@@ -94,10 +95,10 @@ impl GraphRenderer {
         
         let hash_short = if commit.hash.len() > 7 { &commit.hash[..7] } else { &commit.hash };
         
-        println!("{} \x1b[90m{}\x1b[0m  \x1b[1m{}\x1b[0m", 
+        println!("{} {}  {}", 
             graph, 
-            hash_short, 
-            commit.subject
+            styled(hash_short, TreeStyle::hash()), 
+            styled(&commit.subject, TreeStyle::subject())
         );
     }
 
@@ -106,9 +107,9 @@ impl GraphRenderer {
         for (i, lane) in self.active_lanes.iter().enumerate() {
             let next_exists = next_lanes.get(i).map_or(false, |l| l.is_some());
             if i == node_lane && next_exists {
-                graph.push_str("\x1b[90m│\x1b[0m");
+                graph.push_str(&styled("│", TreeStyle::connector()));
             } else if lane.is_some() && next_exists {
-                graph.push_str("\x1b[90m│\x1b[0m");
+                graph.push_str(&styled("│", TreeStyle::connector()));
             } else {
                 graph.push(' ');
             }
@@ -116,26 +117,46 @@ impl GraphRenderer {
         }
 
         let date_str = self.format_date(commit.date);
-        let refs_str = self.format_labels_pretty(&commit.labels);
+        let refs_str = self.format_labels_ide(&commit.labels);
         
-        println!("{} \x1b[90m{} • {}\x1b[0m{}", 
+        print!("{} {} {} {}", 
             graph, 
-            commit.author, 
-            date_str,
-            refs_str
+            styled(&commit.author, TreeStyle::metadata()), 
+            styled("•", TreeStyle::separator()),
+            styled(date_str, TreeStyle::metadata())
         );
+        
+        if !refs_str.is_empty() {
+             print!(" {} {}", styled("•", TreeStyle::separator()), refs_str);
+        }
+        println!();
     }
 
     fn render_connector_row(&self, next_lanes: &[Option<String>], node_lane: usize, parents: &[String]) {
+        let connector_style = TreeStyle::connector();
+        
+        if parents.is_empty() {
+            if next_lanes.iter().any(|l| l.is_some()) {
+                let mut graph = String::new();
+                for lane in next_lanes.iter() {
+                    if lane.is_some() { graph.push_str(&styled("│", connector_style)); } 
+                    else { graph.push(' '); }
+                    graph.push_str("  ");
+                }
+                println!("{}", graph);
+            }
+            return;
+        }
+
         let mut graph = String::new();
         let is_merge = parents.len() > 1;
 
         for (i, _) in self.active_lanes.iter().enumerate() {
             if i == node_lane {
                 if is_merge {
-                    graph.push_str("\x1b[90m├─╮\x1b[0m");
+                    graph.push_str(&styled("├─╮", connector_style));
                 } else if next_lanes.get(i).map_or(false, |l| l.is_some()) {
-                    graph.push_str("\x1b[90m│  \x1b[0m");
+                    graph.push_str(&styled("│  ", connector_style));
                 } else {
                     graph.push_str("   ");
                 }
@@ -144,11 +165,11 @@ impl GraphRenderer {
                 let next_exists = next_lanes.get(i).map_or(false, |l| l.is_some());
                 
                 if current_exists && next_exists {
-                    graph.push_str("\x1b[90m│  \x1b[0m");
+                    graph.push_str(&styled("│  ", connector_style));
                 } else if current_exists && !next_exists {
-                    graph.push_str("\x1b[90m╰─╮\x1b[0m");
+                    graph.push_str(&styled("╰─╮", connector_style));
                 } else if !current_exists && next_exists {
-                    graph.push_str("\x1b[90m  │\x1b[0m");
+                    graph.push_str(&styled("  │", connector_style));
                 } else {
                     graph.push_str("   ");
                 }
@@ -177,35 +198,41 @@ impl GraphRenderer {
         else { format!("{} months ago", diff / 2592000) }
     }
 
-    fn format_labels_pretty(&self, labels: &[LabelInfo]) -> String {
+    fn format_labels_ide(&self, labels: &[LabelInfo]) -> String {
         if labels.is_empty() { return String::new(); }
         let mut parts = Vec::new();
         
         let mut head_ref = None;
         for l in labels {
-            match l {
-                LabelInfo::Head(n) => head_ref = Some(n.clone()),
-                _ => {}
-            }
+            if let LabelInfo::Head(n) = l { head_ref = Some(n.clone()); }
         }
 
         for l in labels {
             match l {
-                LabelInfo::Head(_) => {}, // Handled specially
+                LabelInfo::Head(_) => {}, 
                 LabelInfo::LocalBranch(n) => {
                     if head_ref.as_ref() == Some(n) {
-                        parts.push(format!("\x1b[36mHEAD → {}\x1b[0m", n));
+                        parts.push(styled(format!("HEAD → {}", n), TreeStyle::head_badge()));
                     } else {
-                        parts.push(format!("\x1b[32m{}\x1b[0m", n));
+                        parts.push(styled(n, TreeStyle::local_branch_badge()));
                     }
                 },
-                LabelInfo::RemoteBranch(n) => parts.push(format!("\x1b[31morigin/{}\x1b[0m", n)),
-                LabelInfo::Tag(n) => parts.push(format!("\x1b[33mtag:{}\x1b[0m", n)),
+                LabelInfo::RemoteBranch(n) => {
+                    parts.push(styled(format!("origin/{}", n), TreeStyle::remote_branch_badge()));
+                },
+                LabelInfo::Tag(n) => {
+                    parts.push(styled(format!("tag:{}", n), TreeStyle::tag_badge()));
+                },
             }
         }
         
+        if parts.is_empty() && head_ref.is_some() {
+             // Only HEAD ref exists (detached or head on hash)
+             parts.push(styled("HEAD", TreeStyle::head_badge()));
+        }
+
         if parts.is_empty() { return String::new(); }
-        format!(" \x1b[90m•\x1b[0m {}", parts.join(" \x1b[90m|\x1b[0m "))
+        parts.join(&styled(" | ", TreeStyle::ref_divider()))
     }
 }
 
@@ -226,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn test_linear_history() {
+    fn test_styled_history() {
         let mut renderer = GraphRenderer::new();
         let commits = vec![
             mock_commit("C", vec!["B"]),
