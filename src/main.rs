@@ -22,9 +22,9 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(GitXCommand::Tree { filter, interactive, limit }) => {
+        Some(GitXCommand::Tree { filter, cli, limit }) => {
             let repo = GitRepo::open_default()?;
-            if interactive {
+            if !cli {
                 tui::run_tree_explorer(repo, filter)?;
             } else {
                 let commits = if let Some(ref q) = filter {

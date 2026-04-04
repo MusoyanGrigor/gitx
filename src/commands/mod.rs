@@ -19,9 +19,9 @@ pub enum GitXCommand {
         #[arg(short, long)]
         filter: Option<String>,
 
-        /// Use interactive TUI mode
+        /// Use plain CLI tree output
         #[arg(short, long)]
-        interactive: bool,
+        cli: bool,
 
         /// Limit number of commits shown
         #[arg(short, long, default_value = "50")]
