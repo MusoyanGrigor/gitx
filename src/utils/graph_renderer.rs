@@ -100,7 +100,7 @@ impl GraphRenderer {
     }
 
     fn render_ide_row(&self, commit: &CommitInfo, node_lane_idx: usize, graph_area_width: usize) {
-        let is_merge = commit.parents.len() > 1;
+        let _is_merge = commit.parents.len() > 1;
         let is_head = commit.labels.iter().any(|l| matches!(l, LabelInfo::Head(_)));
         
         let lane_color = self.active_lanes[node_lane_idx].as_ref().unwrap().color_idx;
@@ -128,7 +128,7 @@ impl GraphRenderer {
             for _ in 0..(graph_area_width - prefix_len) { graph.push(' '); }
         }
 
-        let hash_short = if commit.hash.len() > 7 { &commit.hash[..7] } else { &commit.hash };
+        let _hash_short = if commit.hash.len() > 7 { &commit.hash[..7] } else { &commit.hash };
         let refs_str = self.format_labels_badge(&commit.labels);
         
         println!("{}  {:<45}  {}", 
@@ -168,7 +168,7 @@ impl GraphRenderer {
 
     fn render_main_trunk_connector(&self, next_lanes: &[Option<LaneState>]) {
         let mut g = String::new();
-        for (i, lane) in next_lanes.iter().enumerate() {
+        for (_i, lane) in next_lanes.iter().enumerate() {
             if let Some(ls) = lane { g.push_str(&styled("│", TreeStyle::connector(ls.color_idx))); }
             else { g.push(' '); }
             g.push_str("  ");
