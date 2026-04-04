@@ -189,7 +189,7 @@ impl GraphRenderer {
                 let curr = &self.active_lanes[i];
                 let next = next_lanes.get(i).unwrap_or(&None);
                 
-                if let (Some(c_ls), Some(n_ls)) = (curr, next) {
+                if let (Some(c_ls), Some(_n_ls)) = (curr, next) {
                     graph.push_str(&styled("│  ", TreeStyle::connector(c_ls.color_idx)));
                 } else if let Some(c_ls) = curr {
                     // Lane ending or converging
