@@ -57,6 +57,10 @@ fn main() -> Result<()> {
         Some(GitXCommand::Timeline) => {
             println!("Timeline playback mode is coming soon in v0.2.0");
         }
+        Some(GitXCommand::Undo { subcommand, yes, dry_run }) => {
+            let repo = GitRepo::open_default()?;
+            crate::commands::undo::handle_undo(repo, subcommand, yes, dry_run)?;
+        }
         None => {
             // No subcommand provided. Check for raw args for forwarding.
             if !cli.raw_args.is_empty() {

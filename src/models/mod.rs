@@ -1,10 +1,12 @@
+pub mod undo;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitInfo {
     pub hash: String,
     pub author: String,
-    pub date: i64, // Unix timestamp instead of chrono
+    pub date: i64, 
     pub subject: String,
     pub body: Option<String>,
     pub labels: Vec<LabelInfo>,

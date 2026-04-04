@@ -78,7 +78,14 @@ impl GraphRenderer {
 
     fn render_node_row(&self, commit: &CommitInfo, node_lane: usize) {
         let is_head = commit.labels.iter().any(|l| matches!(l, LabelInfo::Head(_)));
-        let node_style = if is_head { TreeStyle::head_node() } else { TreeStyle::commit_node() };
+        let is_merge = commit.parents.len() > 1;
+        let node_style = if is_head { 
+            TreeStyle::head_node() 
+        } else if is_merge {
+            TreeStyle::merge_node()
+        } else { 
+            TreeStyle::commit_node() 
+        };
         let node_char = if is_head { "●" } else { "●" }; // Same char but different style
         
         let mut graph = String::new();

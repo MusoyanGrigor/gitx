@@ -1,3 +1,5 @@
+pub mod undo;
+
 use anyhow::{Result, anyhow};
 use git2::{Repository, Commit, Oid, BranchType, Sort};
 use crate::models::{CommitInfo, ComparisonResult, LabelInfo};

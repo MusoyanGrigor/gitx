@@ -1,3 +1,4 @@
+pub mod undo;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
@@ -39,6 +40,56 @@ pub enum GitXCommand {
     Jump {
         reference: String,
     },
+    /// Undo recent changes safely
+    Undo {
+        #[command(subcommand)]
+        subcommand: UndoSubcommand,
+        
+        /// Skip confirmation and proceed (be careful!)
+        #[arg(short, long)]
+        yes: bool,
+
+        /// Preview actions without executing them
+        #[arg(short, long)]
+        dry_run: bool,
+    },
     /// Sequential commit history viewer (MVP Stub)
     Timeline,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum UndoSubcommand {
+    /// Show what can be undone
+    Status,
+    /// Unstage staged changes (git reset)
+    Unstage,
+    /// Discard unstaged working tree changes (git restore)
+    Discard,
+    /// Undo the most recent local commit
+    LastCommit {
+        /// Move HEAD back but keep changes staged (reset --soft)
+        #[arg(short, long)]
+        soft: bool,
+        /// Undo commit and unstage changes (reset --mixed)
+        #[arg(short, long, default_value = "true")] // Safest default
+        mixed: bool,
+        /// Undo commit and DISCARD all changes (reset --hard) - DANGEROUS
+        #[arg(short, long)]
+        hard: bool,
+    },
+    /// Remove untracked files (git clean)
+    Clean {
+        /// Also remove untracked directories
+        #[arg(short = 'd', long)]
+        directories: bool,
+        /// Also remove ignored files
+        #[arg(short = 'x', long)]
+        ignored: bool,
+    },
+    /// Restore a clean repo state (all of the above)
+    All {
+        /// Also remove untracked files
+        #[arg(short, long)]
+        clean_untracked: bool,
+    }
 }
