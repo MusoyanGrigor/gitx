@@ -2,7 +2,6 @@ use crate::models::{CommitInfo, LabelInfo};
 use crate::utils::styles::{TreeStyle, styled};
 use crossterm::style::Stylize;
 
-/// Represents a lane state: a commit hash plus its assigned color index
 #[derive(Clone, Debug)]
 struct LaneState {
     hash: String,
@@ -16,7 +15,7 @@ pub struct GraphRenderer {
 
 impl GraphRenderer {
     pub fn new() -> Self {
-        Self { active_lanes: Vec::new(), next_color_idx: 0 }
+        Self { active_lanes: Vec::new(), next_color_idx: 1 } // Start side colors from 1
     }
 
     pub fn render(&mut self, commits: &[CommitInfo]) {
@@ -25,79 +24,64 @@ impl GraphRenderer {
             return;
         }
 
-        // Align metadata columns by calculating max lanes first
-        let max_lanes = self.calculate_max_lanes(commits);
-        let graph_area_width = (max_lanes * 3).max(6);
+        let max_lanes = 4; // Compact enough for this style
+        let graph_area_width = max_lanes * 3;
 
-        println!(); // Spacing
+        println!(); 
 
         for (idx, commit) in commits.iter().enumerate() {
             let is_last = idx == commits.len() - 1;
             
-            // 1. Where is our current commit? Assign or get lane + its color
+            // 1. Assign/get lane
             let node_lane_idx = self.get_or_assign_lane(&commit.hash);
-            let node_lane_color = self.active_lanes[node_lane_idx].as_ref().unwrap().color_idx;
+            let lane_color = self.active_lanes[node_lane_idx].as_ref().unwrap().color_idx;
             
-            // 2. Prepare next state (calculate lanes for children)
+            // 2. Prepare next state
             let mut next_lanes = self.active_lanes.clone();
-            next_lanes[node_lane_idx] = None; // Node is consumed
+            next_lanes[node_lane_idx] = None;
             
-            // Add parents
             for (i, p_hash) in commit.parents.iter().enumerate() {
-                // If parent is not tracked, add it to lanes
                 if !next_lanes.iter().any(|l| l.as_ref().map_or(false, |ls| &ls.hash == p_hash)) {
-                    let color = if i == 0 { node_lane_color } else { self.next_color() };
+                    // Force parent 0 into trunk if possible, or same lane
+                    let color = if node_lane_idx == 0 { 0 } else if i == 0 { lane_color } else { self.next_color() };
                     let state = LaneState { hash: p_hash.clone(), color_idx: color };
                     
-                    let pos = next_lanes.iter().position(|l| l.is_none()).unwrap_or(next_lanes.len());
-                    if pos == next_lanes.len() { next_lanes.push(Some(state)); } 
+                    let pos = if i == 0 && node_lane_idx == 0 { 0 } 
+                              else { next_lanes.iter().position(|l| l.is_none()).unwrap_or(next_lanes.len()) };
+                    
+                    if pos >= next_lanes.len() { next_lanes.push(Some(state)); } 
                     else { next_lanes[pos] = Some(state); }
                 }
             }
 
-            // 3. Render Node Row
-            self.render_node_row(commit, node_lane_idx, graph_area_width);
+            // 3. Render Connector ABOVE (Arc start)
+            if node_lane_idx > 0 {
+                self.render_arc_start(node_lane_idx);
+            }
 
-            // 4. Render Connector (Transition) Row
+            // 4. Render Node Row
+            self.render_ide_row(commit, node_lane_idx, graph_area_width);
+
+            // 5. Render Connector BELOW (Arc end)
             if !is_last {
-                self.render_connector_row(&next_lanes, node_lane_idx, &commit.parents);
+                 if node_lane_idx > 0 {
+                    self.render_arc_end(node_lane_idx);
+                 } else {
+                    self.render_main_trunk_connector(&next_lanes);
+                 }
             }
             
-            // 5. Commit state for next iteration
             self.active_lanes = next_lanes;
             self.trim_lanes();
         }
         
-        println!(); // Spacing
-    }
-
-    fn calculate_max_lanes(&self, commits: &[CommitInfo]) -> usize {
-        let mut sim_lanes: Vec<Option<String>> = self.active_lanes.iter().map(|l| l.as_ref().map(|s| s.hash.clone())).collect();
-        let mut max = sim_lanes.len();
-        for commit in commits {
-            let pos = if let Some(p) = sim_lanes.iter().position(|l| l.as_ref() == Some(&commit.hash)) { p } 
-                      else {
-                           let p = sim_lanes.iter().position(|l| l.is_none()).unwrap_or(sim_lanes.len());
-                           if p == sim_lanes.len() { sim_lanes.push(Some(commit.hash.clone())); } 
-                           else { sim_lanes[p] = Some(commit.hash.clone()); }
-                           p
-                      };
-            sim_lanes[pos] = None;
-            for p in &commit.parents {
-                if !sim_lanes.contains(&Some(p.clone())) {
-                     let p_pos = sim_lanes.iter().position(|l| l.is_none()).unwrap_or(sim_lanes.len());
-                     if p_pos == sim_lanes.len() { sim_lanes.push(Some(p.clone())); } else { sim_lanes[p_pos] = Some(p.clone()); }
-                }
-            }
-            max = max.max(sim_lanes.len());
-            while sim_lanes.last().map_or(false, |l| l.is_none()) { sim_lanes.pop(); }
-        }
-        max
+        println!(); 
     }
 
     fn next_color(&mut self) -> usize {
         let c = self.next_color_idx;
-        self.next_color_idx += 1;
+        self.next_color_idx = (self.next_color_idx + 1) % 6;
+        if self.next_color_idx == 0 { self.next_color_idx = 1; } // Skip lane 0 blue
         c
     }
 
@@ -105,25 +89,27 @@ impl GraphRenderer {
         if let Some(pos) = self.active_lanes.iter().position(|l| l.as_ref().map_or(false, |ls| &ls.hash == hash)) {
             pos
         } else {
-            let color = self.next_color();
-            let pos = self.active_lanes.iter().position(|l| l.is_none()).unwrap_or(self.active_lanes.len());
+            // First commit usually goes to trunk
+            let pos = if self.active_lanes.is_empty() { 0 } else { self.active_lanes.iter().position(|l| l.is_none()).unwrap_or(self.active_lanes.len()) };
+            let color = if pos == 0 { 0 } else { self.next_color() };
             let state = LaneState { hash: hash.to_string(), color_idx: color };
-            if pos == self.active_lanes.len() { self.active_lanes.push(Some(state)); } 
+            if pos >= self.active_lanes.len() { self.active_lanes.push(Some(state)); } 
             else { self.active_lanes[pos] = Some(state); }
             pos
         }
     }
 
-    fn render_node_row(&self, commit: &CommitInfo, node_lane_idx: usize, graph_area_width: usize) {
-        let is_head = commit.labels.iter().any(|l| matches!(l, LabelInfo::Head(_)));
+    fn render_ide_row(&self, commit: &CommitInfo, node_lane_idx: usize, graph_area_width: usize) {
         let is_merge = commit.parents.len() > 1;
+        let is_head = commit.labels.iter().any(|l| matches!(l, LabelInfo::Head(_)));
         
         let lane_color = self.active_lanes[node_lane_idx].as_ref().unwrap().color_idx;
-        
         let node_style = if is_head { TreeStyle::head_node() } 
-                         else if is_merge { TreeStyle::merge_node(lane_color) }
+                         else if node_lane_idx == 0 { TreeStyle::merge_node(0) }
                          else { TreeStyle::commit_node(lane_color) };
-        let node_char = if is_head { "◉" } else if is_merge { "◎" } else { "●" };
+        
+        // Icon: hollow for main line merges/anchors, solid for side commits
+        let node_char = if is_head { "◉" } else if node_lane_idx == 0 { "○" } else { "●" };
         
         let mut graph = String::new();
         for (i, lane) in self.active_lanes.iter().enumerate() {
@@ -143,101 +129,82 @@ impl GraphRenderer {
         }
 
         let hash_short = if commit.hash.len() > 7 { &commit.hash[..7] } else { &commit.hash };
-        let date_str = self.format_date(commit.date);
-        let refs_str = self.format_labels_ide(&commit.labels);
+        let refs_str = self.format_labels_badge(&commit.labels);
         
-        println!("{} {}  {:<35}  {} {} {} {}", 
+        println!("{}  {:<45}  {}", 
             graph, 
-            styled(hash_short, TreeStyle::hash()), 
             styled(&commit.subject, TreeStyle::subject()),
-            styled(&commit.author, TreeStyle::metadata()), 
-            styled("•", TreeStyle::separator()),
-            styled(date_str, TreeStyle::metadata()),
             refs_str
         );
     }
 
-    fn render_connector_row(&self, next_lanes: &[Option<LaneState>], node_lane_idx: usize, parents: &[String]) {
-        if parents.is_empty() {
-             // Root: continue other lanes
-             if next_lanes.iter().any(|l| l.is_some()) {
-                 let mut graph = String::new();
-                 for lane in next_lanes.iter() {
-                     if let Some(ls) = lane { graph.push_str(&styled("│", TreeStyle::connector(ls.color_idx))); }
-                     else { graph.push(' '); }
-                     graph.push_str("  ");
-                 }
-                 println!("{}", graph);
-             }
-             return;
+    fn render_arc_start(&self, lane_idx: usize) {
+        let trunk_style = TreeStyle::connector(0);
+        let branch_color = self.active_lanes[lane_idx].as_ref().unwrap().color_idx;
+        let mut g = String::new();
+        g.push_str(&styled("│", trunk_style));
+        g.push_str(&styled("╭", TreeStyle::connector(branch_color)));
+        for i in 1..lane_idx {
+            if self.active_lanes[i].is_some() {
+                 g.push_str(&styled("│", TreeStyle::connector(self.active_lanes[i].as_ref().unwrap().color_idx)));
+            } else { g.push_str("─"); }
         }
+        println!("{}", g);
+    }
 
-        let mut graph = String::new();
-        let current_color = self.active_lanes[node_lane_idx].as_ref().unwrap().color_idx;
-        let is_merge = parents.len() > 1;
-
-        for (i, _) in self.active_lanes.iter().enumerate() {
-            if i == node_lane_idx {
-                 if is_merge {
-                      graph.push_str(&styled("├─╮", TreeStyle::connector(current_color)));
-                 } else if next_lanes.get(i).map_or(false, |l| l.is_some()) {
-                      graph.push_str(&styled("│  ", TreeStyle::connector(current_color)));
-                 } else {
-                      graph.push_str("   ");
-                 }
-            } else {
-                let curr = &self.active_lanes[i];
-                let next = next_lanes.get(i).unwrap_or(&None);
-                
-                if let (Some(c_ls), Some(_n_ls)) = (curr, next) {
-                    graph.push_str(&styled("│  ", TreeStyle::connector(c_ls.color_idx)));
-                } else if let Some(c_ls) = curr {
-                    // Lane ending or converging
-                    graph.push_str(&styled("╰─╮", TreeStyle::connector(c_ls.color_idx)));
-                } else if let Some(n_ls) = next {
-                    // New lane starting or diverging
-                    graph.push_str(&styled("  │", TreeStyle::connector(n_ls.color_idx)));
-                } else {
-                    graph.push_str("   ");
-                }
-            }
+    fn render_arc_end(&self, lane_idx: usize) {
+        let trunk_style = TreeStyle::connector(0);
+        let branch_color = self.active_lanes[lane_idx].as_ref().unwrap().color_idx;
+        let mut g = String::new();
+        g.push_str(&styled("│", trunk_style));
+        g.push_str(&styled("╰", TreeStyle::connector(branch_color)));
+        for i in 1..lane_idx {
+             if self.active_lanes[i].is_some() {
+                 g.push_str(&styled("│", TreeStyle::connector(self.active_lanes[i].as_ref().unwrap().color_idx)));
+            } else { g.push_str("─"); }
         }
-        println!("{}", graph);
+        println!("{}", g);
+    }
+
+    fn render_main_trunk_connector(&self, next_lanes: &[Option<LaneState>]) {
+        let mut g = String::new();
+        for (i, lane) in next_lanes.iter().enumerate() {
+            if let Some(ls) = lane { g.push_str(&styled("│", TreeStyle::connector(ls.color_idx))); }
+            else { g.push(' '); }
+            g.push_str("  ");
+        }
+        println!("{}", g);
     }
 
     fn trim_lanes(&mut self) {
         while self.active_lanes.last().map_or(false, |l| l.is_none()) { self.active_lanes.pop(); }
     }
 
-    fn format_date(&self, timestamp: i64) -> String {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-        let diff = now.saturating_sub(timestamp as u64);
-        if diff < 60 { "now".into() }
-        else if diff < 3600 { format!("{}m", diff / 60) }
-        else if diff < 86400 { format!("{}h", diff / 3600) }
-        else if diff < 2592000 { format!("{}d", diff / 86400) }
-        else { format!("{}mo", diff / 2592000) }
-    }
-
-    fn format_labels_ide(&self, labels: &[LabelInfo]) -> String {
+    fn format_labels_badge(&self, labels: &[LabelInfo]) -> String {
         if labels.is_empty() { return String::new(); }
-        let mut parts = Vec::new();
         let mut head_ref = None;
         for l in labels { if let LabelInfo::Head(n) = l { head_ref = Some(n.clone()); } }
+        
+        let mut badges = Vec::new();
         for l in labels {
             match l {
                 LabelInfo::Head(_) => {}, 
                 LabelInfo::LocalBranch(n) => {
-                    if head_ref.as_ref() == Some(n) { parts.push(styled(format!("HEAD → {}", n), TreeStyle::head_badge())); } 
-                    else { parts.push(styled(n, TreeStyle::local_branch_badge())); }
+                    let text = if head_ref.as_ref() == Some(n) { format!("◎ {}", n) } else { n.clone() };
+                    badges.push(styled(format!(" {} ", text), TreeStyle::local_branch_badge().on_blue().black()));
                 },
-                LabelInfo::RemoteBranch(n) => { parts.push(styled(format!("origin/{}", n), TreeStyle::remote_branch_badge())); },
-                LabelInfo::Tag(n) => { parts.push(styled(format!("tag:{}", n), TreeStyle::tag_badge())); },
+                LabelInfo::RemoteBranch(n) => {
+                    badges.push(styled(format!(" origin/{} ", n), TreeStyle::remote_branch_badge().on_black()));
+                },
+                LabelInfo::Tag(n) => {
+                    badges.push(styled(format!(" {} ", n), TreeStyle::tag_badge().on_yellow().black()));
+                },
             }
         }
-        if parts.is_empty() && head_ref.is_some() { parts.push(styled("HEAD", TreeStyle::head_badge())); }
-        if parts.is_empty() { return String::new(); }
-        format!("{} {}", styled("•", TreeStyle::separator()), parts.join(&styled(" | ", TreeStyle::ref_divider())))
+        if badges.is_empty() && head_ref.is_some() {
+            badges.push(styled(" HEAD ", TreeStyle::head_badge().on_cyan().black()));
+        }
+        badges.join(" ")
     }
 }
 
@@ -258,11 +225,11 @@ mod tests {
     }
 
     #[test]
-    fn test_colorful_history() {
+    fn test_ide_arcs() {
         let mut renderer = GraphRenderer::new();
         let commits = vec![
             mock_commit("H", vec!["G"]),         
-            mock_commit("G", vec!["E", "F"]),    
+            mock_commit("G", vec!["F", "E"]),    
             mock_commit("F", vec!["D"]),         
             mock_commit("E", vec!["D"]),         
             mock_commit("D", vec!["C"]),         
