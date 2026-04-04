@@ -7,17 +7,27 @@ impl TreeStyle {
         ContentStyle::new().with(Color::Cyan).attribute(Attribute::Bold)
     }
 
-    pub fn commit_node() -> ContentStyle {
-        ContentStyle::new().with(Color::Magenta)
+    pub fn commit_node(lane: usize) -> ContentStyle {
+        ContentStyle::new().with(Self::lane_color(lane))
     }
 
-    pub fn merge_node() -> ContentStyle {
-        ContentStyle::new().with(Color::DarkMagenta).attribute(Attribute::Bold)
+    pub fn merge_node(lane: usize) -> ContentStyle {
+        ContentStyle::new().with(Self::lane_color(lane)).attribute(Attribute::Bold)
     }
 
-    pub fn connector() -> ContentStyle {
-        // Very subtle dark gray
-        ContentStyle::new().with(Color::AnsiValue(239))
+    pub fn connector(lane: usize) -> ContentStyle {
+        ContentStyle::new().with(Self::lane_color(lane))
+    }
+
+    pub fn lane_color(lane: usize) -> Color {
+        match lane % 6 {
+            0 => Color::Blue,
+            1 => Color::Green,
+            2 => Color::Yellow,
+            3 => Color::Magenta,
+            4 => Color::Cyan,
+            _ => Color::Red,
+        }
     }
 
     pub fn hash() -> ContentStyle {
@@ -29,12 +39,15 @@ impl TreeStyle {
     }
 
     pub fn metadata() -> ContentStyle {
+        // Very dim gray for metadata
         ContentStyle::new().with(Color::AnsiValue(238))
     }
 
     pub fn separator() -> ContentStyle {
         ContentStyle::new().with(Color::AnsiValue(236))
     }
+
+    // --- Badges ---
 
     pub fn head_badge() -> ContentStyle {
         ContentStyle::new().with(Color::Cyan).attribute(Attribute::Bold)
@@ -45,7 +58,7 @@ impl TreeStyle {
     }
 
     pub fn remote_branch_badge() -> ContentStyle {
-        ContentStyle::new().with(Color::AnsiValue(167)) // Soft redish
+        ContentStyle::new().with(Color::AnsiValue(167))
     }
 
     pub fn tag_badge() -> ContentStyle {

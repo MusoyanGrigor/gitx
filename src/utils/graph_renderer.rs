@@ -2,13 +2,21 @@ use crate::models::{CommitInfo, LabelInfo};
 use crate::utils::styles::{TreeStyle, styled};
 use crossterm::style::Stylize;
 
+/// Represents a lane state: a commit hash plus its assigned color index
+#[derive(Clone, Debug)]
+struct LaneState {
+    hash: String,
+    color_idx: usize,
+}
+
 pub struct GraphRenderer {
-    active_lanes: Vec<Option<String>>,
+    active_lanes: Vec<Option<LaneState>>,
+    next_color_idx: usize,
 }
 
 impl GraphRenderer {
     pub fn new() -> Self {
-        Self { active_lanes: Vec::new() }
+        Self { active_lanes: Vec::new(), next_color_idx: 0 }
     }
 
     pub fn render(&mut self, commits: &[CommitInfo]) {
@@ -17,43 +25,45 @@ impl GraphRenderer {
             return;
         }
 
-        // Pre-scan to find max lanes for alignment
+        // Align metadata columns by calculating max lanes first
         let max_lanes = self.calculate_max_lanes(commits);
-        let graph_width = (max_lanes * 3).max(6); // At least some space
+        let graph_area_width = (max_lanes * 3).max(6);
 
         println!(); // Spacing
 
         for (idx, commit) in commits.iter().enumerate() {
             let is_last = idx == commits.len() - 1;
-            let node_lane = self.get_or_assign_lane(&commit.hash);
             
+            // 1. Where is our current commit? Assign or get lane + its color
+            let node_lane_idx = self.get_or_assign_lane(&commit.hash);
+            let node_lane_color = self.active_lanes[node_lane_idx].as_ref().unwrap().color_idx;
+            
+            // 2. Prepare next state (calculate lanes for children)
             let mut next_lanes = self.active_lanes.clone();
-            next_lanes[node_lane] = None;
+            next_lanes[node_lane_idx] = None; // Node is consumed
             
-            let mut added_parents = Vec::new();
-            for (i, parent) in commit.parents.iter().enumerate() {
-                if !next_lanes.iter().any(|l| l.as_ref() == Some(parent)) {
-                    if i == 0 {
-                        next_lanes[node_lane] = Some(parent.clone());
-                    } else {
-                        added_parents.push(parent.clone());
-                    }
+            // Add parents
+            for (i, p_hash) in commit.parents.iter().enumerate() {
+                // If parent is not tracked, add it to lanes
+                if !next_lanes.iter().any(|l| l.as_ref().map_or(false, |ls| &ls.hash == p_hash)) {
+                    let color = if i == 0 { node_lane_color } else { self.next_color() };
+                    let state = LaneState { hash: p_hash.clone(), color_idx: color };
+                    
+                    let pos = next_lanes.iter().position(|l| l.is_none()).unwrap_or(next_lanes.len());
+                    if pos == next_lanes.len() { next_lanes.push(Some(state)); } 
+                    else { next_lanes[pos] = Some(state); }
                 }
             }
-            for p in added_parents {
-                let pos = next_lanes.iter().position(|l| l.is_none()).unwrap_or(next_lanes.len());
-                if pos == next_lanes.len() { next_lanes.push(Some(p)); } 
-                else { next_lanes[pos] = Some(p); }
-            }
 
-            // Render COMPACT One-Line layout
-            self.render_compact_row(commit, node_lane, graph_width);
+            // 3. Render Node Row
+            self.render_node_row(commit, node_lane_idx, graph_area_width);
 
-            // Connectors (subtle)
+            // 4. Render Connector (Transition) Row
             if !is_last {
-                self.render_connector_row(&next_lanes, node_lane, &commit.parents);
+                self.render_connector_row(&next_lanes, node_lane_idx, &commit.parents);
             }
             
+            // 5. Commit state for next iteration
             self.active_lanes = next_lanes;
             self.trim_lanes();
         }
@@ -62,92 +72,84 @@ impl GraphRenderer {
     }
 
     fn calculate_max_lanes(&self, commits: &[CommitInfo]) -> usize {
-        // Simple heuristic for pre-scan
-        let mut temp_lanes: Vec<Option<String>> = self.active_lanes.clone();
-        let mut max = temp_lanes.len();
-        
+        let mut sim_lanes: Vec<Option<String>> = self.active_lanes.iter().map(|l| l.as_ref().map(|s| s.hash.clone())).collect();
+        let mut max = sim_lanes.len();
         for commit in commits {
-            // This is a rough simulation
-            let node_lane = if let Some(pos) = temp_lanes.iter().position(|l| l.as_ref() == Some(&commit.hash)) {
-                pos
-            } else {
-                let pos = temp_lanes.iter().position(|l| l.is_none()).unwrap_or(temp_lanes.len());
-                if pos == temp_lanes.len() { temp_lanes.push(Some(commit.hash.clone())); } 
-                else { temp_lanes[pos] = Some(commit.hash.clone()); }
-                pos
-            };
-            
-            temp_lanes[node_lane] = None;
-            for (i, p) in commit.parents.iter().enumerate() {
-                if !temp_lanes.iter().any(|l| l.as_ref() == Some(p)) {
-                    if i == 0 { temp_lanes[node_lane] = Some(p.clone()); } 
-                    else {
-                        let pos = temp_lanes.iter().position(|l| l.is_none()).unwrap_or(temp_lanes.len());
-                        if pos == temp_lanes.len() { temp_lanes.push(Some(p.clone())); } 
-                        else { temp_lanes[pos] = Some(p.clone()); }
-                    }
+            let pos = if let Some(p) = sim_lanes.iter().position(|l| l.as_ref() == Some(&commit.hash)) { p } 
+                      else {
+                           let p = sim_lanes.iter().position(|l| l.is_none()).unwrap_or(sim_lanes.len());
+                           if p == sim_lanes.len() { sim_lanes.push(Some(commit.hash.clone())); } 
+                           else { sim_lanes[p] = Some(commit.hash.clone()); }
+                           p
+                      };
+            sim_lanes[pos] = None;
+            for p in &commit.parents {
+                if !sim_lanes.contains(&Some(p.clone())) {
+                     let p_pos = sim_lanes.iter().position(|l| l.is_none()).unwrap_or(sim_lanes.len());
+                     if p_pos == sim_lanes.len() { sim_lanes.push(Some(p.clone())); } else { sim_lanes[p_pos] = Some(p.clone()); }
                 }
             }
-            max = max.max(temp_lanes.len());
-            while temp_lanes.last().map_or(false, |l| l.is_none()) { temp_lanes.pop(); }
+            max = max.max(sim_lanes.len());
+            while sim_lanes.last().map_or(false, |l| l.is_none()) { sim_lanes.pop(); }
         }
         max
     }
 
+    fn next_color(&mut self) -> usize {
+        let c = self.next_color_idx;
+        self.next_color_idx += 1;
+        c
+    }
+
     fn get_or_assign_lane(&mut self, hash: &str) -> usize {
-        if let Some(pos) = self.active_lanes.iter().position(|l| l.as_ref() == Some(&hash.to_string())) {
+        if let Some(pos) = self.active_lanes.iter().position(|l| l.as_ref().map_or(false, |ls| &ls.hash == hash)) {
             pos
         } else {
+            let color = self.next_color();
             let pos = self.active_lanes.iter().position(|l| l.is_none()).unwrap_or(self.active_lanes.len());
-            if pos == self.active_lanes.len() {
-                self.active_lanes.push(Some(hash.to_string()));
-            } else {
-                self.active_lanes[pos] = Some(hash.to_string());
-            }
+            let state = LaneState { hash: hash.to_string(), color_idx: color };
+            if pos == self.active_lanes.len() { self.active_lanes.push(Some(state)); } 
+            else { self.active_lanes[pos] = Some(state); }
             pos
         }
     }
 
-    fn render_compact_row(&self, commit: &CommitInfo, node_lane: usize, graph_width: usize) {
+    fn render_node_row(&self, commit: &CommitInfo, node_lane_idx: usize, graph_area_width: usize) {
         let is_head = commit.labels.iter().any(|l| matches!(l, LabelInfo::Head(_)));
         let is_merge = commit.parents.len() > 1;
         
-        let node_style = if is_head { TreeStyle::head_node() } 
-                         else if is_merge { TreeStyle::merge_node() }
-                         else { TreeStyle::commit_node() };
+        let lane_color = self.active_lanes[node_lane_idx].as_ref().unwrap().color_idx;
         
-        // 1. Build graph prefix
-        let mut prefix = String::new();
+        let node_style = if is_head { TreeStyle::head_node() } 
+                         else if is_merge { TreeStyle::merge_node(lane_color) }
+                         else { TreeStyle::commit_node(lane_color) };
+        let node_char = if is_head { "◉" } else if is_merge { "◎" } else { "●" };
+        
+        let mut graph = String::new();
         for (i, lane) in self.active_lanes.iter().enumerate() {
-            if i == node_lane {
-                prefix.push_str(&styled("●", node_style));
-            } else if lane.is_some() {
-                prefix.push_str(&styled("│", TreeStyle::connector()));
+            if i == node_lane_idx {
+                graph.push_str(&styled(node_char, node_style));
+            } else if let Some(ls) = lane {
+                graph.push_str(&styled("│", TreeStyle::connector(ls.color_idx)));
             } else {
-                prefix.push(' ');
+                graph.push(' ');
             }
-            prefix.push_str("  ");
+            graph.push_str("  ");
         }
         
-        // Pad graph area
         let prefix_len = self.active_lanes.len() * 3;
-        if prefix_len < graph_width {
-            for _ in 0..(graph_width - prefix_len) { prefix.push(' '); }
+        if prefix_len < graph_area_width {
+            for _ in 0..(graph_area_width - prefix_len) { graph.push(' '); }
         }
 
-        // 2. Format Hash & Subject
         let hash_short = if commit.hash.len() > 7 { &commit.hash[..7] } else { &commit.hash };
-        let subject = &commit.subject;
-        
-        // 3. Metadata & Refs
         let date_str = self.format_date(commit.date);
-        let refs_str = self.format_labels_compact(&commit.labels);
+        let refs_str = self.format_labels_ide(&commit.labels);
         
-        // 4. Combined output
-        println!("{} {}  {:<40}  {} {} {} {}", 
-            prefix, 
+        println!("{} {}  {:<35}  {} {} {} {}", 
+            graph, 
             styled(hash_short, TreeStyle::hash()), 
-            styled(subject, TreeStyle::subject()),
+            styled(&commit.subject, TreeStyle::subject()),
             styled(&commit.author, TreeStyle::metadata()), 
             styled("•", TreeStyle::separator()),
             styled(date_str, TreeStyle::metadata()),
@@ -155,36 +157,49 @@ impl GraphRenderer {
         );
     }
 
-    fn render_connector_row(&self, next_lanes: &[Option<String>], node_lane: usize, parents: &[String]) {
-        let style = TreeStyle::connector();
+    fn render_connector_row(&self, next_lanes: &[Option<LaneState>], node_lane_idx: usize, parents: &[String]) {
         if parents.is_empty() {
-            if next_lanes.iter().any(|l| l.is_some()) {
-                let mut graph = String::new();
-                for lane in next_lanes.iter() {
-                    if lane.is_some() { graph.push_str(&styled("│", style)); } 
-                    else { graph.push(' '); }
-                    graph.push_str("  ");
-                }
-                println!("{}", graph);
-            }
-            return;
+             // Root: continue other lanes
+             if next_lanes.iter().any(|l| l.is_some()) {
+                 let mut graph = String::new();
+                 for lane in next_lanes.iter() {
+                     if let Some(ls) = lane { graph.push_str(&styled("│", TreeStyle::connector(ls.color_idx))); }
+                     else { graph.push(' '); }
+                     graph.push_str("  ");
+                 }
+                 println!("{}", graph);
+             }
+             return;
         }
 
         let mut graph = String::new();
+        let current_color = self.active_lanes[node_lane_idx].as_ref().unwrap().color_idx;
         let is_merge = parents.len() > 1;
 
         for (i, _) in self.active_lanes.iter().enumerate() {
-            if i == node_lane {
-                if is_merge { graph.push_str(&styled("├─╮", style)); } 
-                else if next_lanes.get(i).map_or(false, |l| l.is_some()) { graph.push_str(&styled("│  ", style)); } 
-                else { graph.push_str("   "); }
+            if i == node_lane_idx {
+                 if is_merge {
+                      graph.push_str(&styled("├─╮", TreeStyle::connector(current_color)));
+                 } else if next_lanes.get(i).map_or(false, |l| l.is_some()) {
+                      graph.push_str(&styled("│  ", TreeStyle::connector(current_color)));
+                 } else {
+                      graph.push_str("   ");
+                 }
             } else {
-                let current_exists = self.active_lanes[i].is_some();
-                let next_exists = next_lanes.get(i).map_or(false, |l| l.is_some());
-                if current_exists && next_exists { graph.push_str(&styled("│  ", style)); } 
-                else if current_exists && !next_exists { graph.push_str(&styled("╰─╮", style)); } 
-                else if !current_exists && next_exists { graph.push_str(&styled("  │", style)); } 
-                else { graph.push_str("   "); }
+                let curr = &self.active_lanes[i];
+                let next = next_lanes.get(i).unwrap_or(&None);
+                
+                if let (Some(c_ls), Some(n_ls)) = (curr, next) {
+                    graph.push_str(&styled("│  ", TreeStyle::connector(c_ls.color_idx)));
+                } else if let Some(c_ls) = curr {
+                    // Lane ending or converging
+                    graph.push_str(&styled("╰─╮", TreeStyle::connector(c_ls.color_idx)));
+                } else if let Some(n_ls) = next {
+                    // New lane starting or diverging
+                    graph.push_str(&styled("  │", TreeStyle::connector(n_ls.color_idx)));
+                } else {
+                    graph.push_str("   ");
+                }
             }
         }
         println!("{}", graph);
@@ -204,21 +219,17 @@ impl GraphRenderer {
         else { format!("{}mo", diff / 2592000) }
     }
 
-    fn format_labels_compact(&self, labels: &[LabelInfo]) -> String {
+    fn format_labels_ide(&self, labels: &[LabelInfo]) -> String {
         if labels.is_empty() { return String::new(); }
         let mut parts = Vec::new();
         let mut head_ref = None;
         for l in labels { if let LabelInfo::Head(n) = l { head_ref = Some(n.clone()); } }
-
         for l in labels {
             match l {
                 LabelInfo::Head(_) => {}, 
                 LabelInfo::LocalBranch(n) => {
-                    if head_ref.as_ref() == Some(n) {
-                        parts.push(styled(format!("HEAD → {}", n), TreeStyle::head_badge()));
-                    } else {
-                        parts.push(styled(n, TreeStyle::local_branch_badge()));
-                    }
+                    if head_ref.as_ref() == Some(n) { parts.push(styled(format!("HEAD → {}", n), TreeStyle::head_badge())); } 
+                    else { parts.push(styled(n, TreeStyle::local_branch_badge())); }
                 },
                 LabelInfo::RemoteBranch(n) => { parts.push(styled(format!("origin/{}", n), TreeStyle::remote_branch_badge())); },
                 LabelInfo::Tag(n) => { parts.push(styled(format!("tag:{}", n), TreeStyle::tag_badge())); },
@@ -247,12 +258,17 @@ mod tests {
     }
 
     #[test]
-    fn test_compact_history() {
+    fn test_colorful_history() {
         let mut renderer = GraphRenderer::new();
         let commits = vec![
-            mock_commit("C", vec!["B"]),
-            mock_commit("B", vec!["A"]),
-            mock_commit("A", vec![]),
+            mock_commit("H", vec!["G"]),         
+            mock_commit("G", vec!["E", "F"]),    
+            mock_commit("F", vec!["D"]),         
+            mock_commit("E", vec!["D"]),         
+            mock_commit("D", vec!["C"]),         
+            mock_commit("C", vec!["B"]),         
+            mock_commit("B", vec!["A"]),         
+            mock_commit("A", vec![]),            
         ];
         renderer.render(&commits);
     }
