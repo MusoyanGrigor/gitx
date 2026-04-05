@@ -23,10 +23,6 @@ GitX is a fast, terminal-based Git workflow tool built for developers who work w
   gitx commit
   gitx push
   ```
-
-* 🧱 **Modern Architecture**
-  Built in Rust with modular design for future TUI/GUI and plugin support.
-
 ---
 
 ## 🛠 Installation
