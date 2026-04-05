@@ -21,10 +21,7 @@ pub enum UndoAction {
     Unstage(String),
     Discard(String),
     RemoveUntracked(String),
-    ResetCommit {
-        hash: String,
-        mode: ResetMode,
-    },
+    ResetCommit { hash: String, mode: ResetMode },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -33,4 +30,3 @@ pub enum ResetMode {
     Mixed,
     Hard,
 }
-

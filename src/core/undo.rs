@@ -1,10 +1,15 @@
-use anyhow::{Result, anyhow};
-use git2::{StatusOptions, ResetType};
 use crate::core::GitRepo;
-use crate::models::undo::{UndoPlan, UndoAction, CommitUndoInfo, ResetMode};
+use crate::models::undo::{CommitUndoInfo, ResetMode, UndoAction, UndoPlan};
+use anyhow::{anyhow, Result};
+use git2::{ResetType, StatusOptions};
 
 impl GitRepo {
-    pub fn plan_undo_status(&self, include_untracked: bool, include_directories: bool, include_ignored: bool) -> Result<UndoPlan> {
+    pub fn plan_undo_status(
+        &self,
+        include_untracked: bool,
+        include_directories: bool,
+        include_ignored: bool,
+    ) -> Result<UndoPlan> {
         let mut plan = UndoPlan {
             staged_files: Vec::new(),
             unstaged_files: Vec::new(),
@@ -23,7 +28,12 @@ impl GitRepo {
             let path = entry.path().unwrap_or("unknown").to_string();
             let s = entry.status();
 
-            if s.is_index_new() || s.is_index_modified() || s.is_index_deleted() || s.is_index_renamed() || s.is_index_typechange() {
+            if s.is_index_new()
+                || s.is_index_modified()
+                || s.is_index_deleted()
+                || s.is_index_renamed()
+                || s.is_index_typechange()
+            {
                 plan.staged_files.push(path.clone());
             }
 
@@ -41,15 +51,19 @@ impl GitRepo {
                 if let Ok(commit) = self.repo.find_commit(target) {
                     let mut already_pushed = false;
                     if let Ok(shorthand) = head.shorthand().ok_or(anyhow!("no shorthand")) {
-                         if let Ok(branch) = self.repo.find_branch(shorthand, git2::BranchType::Local) {
-                             if let Ok(upstream) = branch.upstream() {
-                                 if let Some(upstream_target) = upstream.get().target() {
-                                     if let Ok((ahead, _)) = self.repo.graph_ahead_behind(target, upstream_target) {
-                                         already_pushed = ahead == 0;
-                                     }
-                                 }
-                             }
-                         }
+                        if let Ok(branch) =
+                            self.repo.find_branch(shorthand, git2::BranchType::Local)
+                        {
+                            if let Ok(upstream) = branch.upstream() {
+                                if let Some(upstream_target) = upstream.get().target() {
+                                    if let Ok((ahead, _)) =
+                                        self.repo.graph_ahead_behind(target, upstream_target)
+                                    {
+                                        already_pushed = ahead == 0;
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     plan.last_commit = Some(CommitUndoInfo {
@@ -93,8 +107,10 @@ impl GitRepo {
                 UndoAction::ResetCommit { hash: _, mode } => {
                     let head = self.repo.head()?;
                     let current_commit = head.peel_to_commit()?;
-                    let parent = current_commit.parent(0).map_err(|_| anyhow!("Commit has no parent to reset to"))?;
-                    
+                    let parent = current_commit
+                        .parent(0)
+                        .map_err(|_| anyhow!("Commit has no parent to reset to"))?;
+
                     let reset_type = match mode {
                         ResetMode::Soft => ResetType::Soft,
                         ResetMode::Mixed => ResetType::Mixed,

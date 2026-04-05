@@ -1,8 +1,19 @@
 pub mod undo;
 
-use anyhow::{Result, anyhow};
-use git2::{Repository, Commit, Oid, BranchType, Sort};
 use crate::models::{CommitInfo, ComparisonResult, LabelInfo};
+use anyhow::{anyhow, Result};
+use git2::{BranchType, Commit, Oid, Repository, Sort};
+
+#[derive(Default, Debug)]
+pub struct CommitFilter {
+    pub author: Option<String>,
+    pub message: Option<String>,
+    pub query: Option<String>, // Generic query from 'tree --filter'
+    pub branch: Option<String>,
+    pub limit: usize,
+    pub only_merges: bool,
+    pub no_merges: bool,
+}
 
 pub struct GitRepo {
     pub repo: Repository,
@@ -17,7 +28,8 @@ impl GitRepo {
     pub fn get_commits(&self, limit: usize) -> Result<Vec<CommitInfo>> {
         let mut walk = self.repo.revwalk()?;
         walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
-        walk.push_head().map_err(|_| anyhow!("Could not push HEAD. Empty repo?"))?;
+        walk.push_head()
+            .map_err(|_| anyhow!("Could not push HEAD. Empty repo?"))?;
 
         let mut commits = Vec::new();
         for id in walk.take(limit) {
@@ -30,39 +42,95 @@ impl GitRepo {
     }
 
     pub fn filter_commits(&self, query: &str) -> Result<Vec<CommitInfo>> {
+        self.filter_commits_ext(CommitFilter {
+            query: Some(query.to_string()),
+            limit: 100,
+            ..Default::default()
+        })
+    }
+
+    pub fn filter_commits_ext(&self, filter: CommitFilter) -> Result<Vec<CommitInfo>> {
         let mut walk = self.repo.revwalk()?;
         walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
-        walk.push_head()?;
+
+        if let Some(ref b) = filter.branch {
+            let obj = self.repo.revparse_single(b)?;
+            walk.push(obj.id())?;
+        } else {
+            walk.push_head()
+                .map_err(|_| anyhow!("Could not push HEAD. Empty repo?"))?;
+        }
 
         let mut matched_oids = Vec::new();
-        let query_lower = query.to_lowercase();
         let mut matched_set = std::collections::HashSet::new();
 
         // 1. Find all matching commits first
         for id in walk {
             let id = id?;
             let commit = self.repo.find_commit(id)?;
-            let subject = commit.summary().unwrap_or("").to_lowercase();
-            let author = commit.author().name().unwrap_or("").to_lowercase();
-            let hash = id.to_string().to_lowercase();
 
-            if subject.contains(&query_lower) || 
-               author.contains(&query_lower) ||
-               hash.starts_with(&query_lower) {
+            let mut matches = true;
+
+            if let Some(ref q) = filter.query {
+                let q_l = q.to_lowercase();
+                let subject = commit.summary().unwrap_or("").to_lowercase();
+                let author = commit.author().name().unwrap_or("").to_lowercase();
+                let hash = id.to_string().to_lowercase();
+                if !subject.contains(&q_l) && !author.contains(&q_l) && !hash.starts_with(&q_l) {
+                    matches = false;
+                }
+            }
+
+            if let Some(ref m) = filter.message {
+                if !commit
+                    .summary()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(&m.to_lowercase())
+                {
+                    matches = false;
+                }
+            }
+
+            if let Some(ref a) = filter.author {
+                if !commit
+                    .author()
+                    .name()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(&a.to_lowercase())
+                {
+                    matches = false;
+                }
+            }
+
+            let is_merge = commit.parent_count() > 1;
+            if filter.only_merges && !is_merge {
+                matches = false;
+            }
+            if filter.no_merges && is_merge {
+                matches = false;
+            }
+
+            if matches {
                 matched_oids.push(id);
                 matched_set.insert(id);
-                if matched_oids.len() >= 100 { break; }
+                if matched_oids.len() >= filter.limit {
+                    break;
+                }
             }
         }
 
-        if matched_oids.is_empty() { return Ok(Vec::new()); }
+        if matched_oids.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        // 2. Convert and simplify: for each match, find its next visible ancestors
+        // 2. Convert and simplify
         let mut final_results = Vec::new();
         for oid in matched_oids {
             let commit = self.repo.find_commit(oid)?;
             let mut info = self.convert_commit(&commit)?;
-            
+
             let mut simplified_parents = Vec::new();
             for p_oid in commit.parent_ids() {
                 if let Some(ancestor) = self.find_visible_ancestor(p_oid, &matched_set) {
@@ -78,7 +146,11 @@ impl GitRepo {
         Ok(final_results)
     }
 
-    fn find_visible_ancestor(&self, start_oid: Oid, matched_set: &std::collections::HashSet<Oid>) -> Option<String> {
+    fn find_visible_ancestor(
+        &self,
+        start_oid: Oid,
+        matched_set: &std::collections::HashSet<Oid>,
+    ) -> Option<String> {
         if matched_set.contains(&start_oid) {
             return Some(start_oid.to_string());
         }
@@ -106,12 +178,16 @@ impl GitRepo {
     pub fn compare(&self, branch1: &str, branch2: &str) -> Result<ComparisonResult> {
         let obj1 = self.repo.revparse_single(branch1)?;
         let obj2 = self.repo.revparse_single(branch2)?;
-        
-        let c1 = obj1.as_commit().ok_or_else(|| anyhow!("Ref {} is not a commit", branch1))?;
-        let c2 = obj2.as_commit().ok_or_else(|| anyhow!("Ref {} is not a commit", branch2))?;
+
+        let c1 = obj1
+            .as_commit()
+            .ok_or_else(|| anyhow!("Ref {} is not a commit", branch1))?;
+        let c2 = obj2
+            .as_commit()
+            .ok_or_else(|| anyhow!("Ref {} is not a commit", branch2))?;
 
         let base_oid = self.repo.merge_base(c1.id(), c2.id())?;
-        
+
         // Find commits in branch1 NOT in branch2
         let mut walk1 = self.repo.revwalk()?;
         walk1.push(c1.id())?;
@@ -183,7 +259,9 @@ impl GitRepo {
 
         self.repo.tag_foreach(|id, name| {
             if id == oid {
-                let name_str = std::str::from_utf8(name).unwrap_or("").replace("refs/tags/", "");
+                let name_str = std::str::from_utf8(name)
+                    .unwrap_or("")
+                    .replace("refs/tags/", "");
                 labels.push(LabelInfo::Tag(name_str));
             }
             true

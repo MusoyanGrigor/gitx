@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct CommitInfo {
     pub hash: String,
     pub author: String,
-    pub date: i64, 
+    pub date: i64,
     pub subject: String,
     pub body: Option<String>,
     pub labels: Vec<LabelInfo>,

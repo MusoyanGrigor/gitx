@@ -1,10 +1,12 @@
-use crossterm::style::{Color, ContentStyle, Attribute, Stylize};
+use crossterm::style::{Attribute, Color, ContentStyle, Stylize};
 
 pub struct TreeStyle;
 
 impl TreeStyle {
     pub fn head_node() -> ContentStyle {
-        ContentStyle::new().with(Color::Cyan).attribute(Attribute::Bold)
+        ContentStyle::new()
+            .with(Color::Cyan)
+            .attribute(Attribute::Bold)
     }
 
     pub fn commit_node(lane: usize) -> ContentStyle {
@@ -12,7 +14,9 @@ impl TreeStyle {
     }
 
     pub fn merge_node(lane: usize) -> ContentStyle {
-        ContentStyle::new().with(Self::lane_color(lane)).attribute(Attribute::Bold)
+        ContentStyle::new()
+            .with(Self::lane_color(lane))
+            .attribute(Attribute::Bold)
     }
 
     pub fn connector(lane: usize) -> ContentStyle {
@@ -35,7 +39,9 @@ impl TreeStyle {
     }
 
     pub fn subject() -> ContentStyle {
-        ContentStyle::new().with(Color::White).attribute(Attribute::Bold)
+        ContentStyle::new()
+            .with(Color::White)
+            .attribute(Attribute::Bold)
     }
 
     pub fn metadata() -> ContentStyle {
@@ -50,7 +56,9 @@ impl TreeStyle {
     // --- Badges ---
 
     pub fn head_badge() -> ContentStyle {
-        ContentStyle::new().with(Color::Cyan).attribute(Attribute::Bold)
+        ContentStyle::new()
+            .with(Color::Cyan)
+            .attribute(Attribute::Bold)
     }
 
     pub fn local_branch_badge() -> ContentStyle {

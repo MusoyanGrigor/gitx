@@ -1,15 +1,15 @@
-mod core;
 mod commands;
+mod core;
 mod forwarding;
 mod models;
 mod tui;
 mod utils;
 
-use anyhow::Result;
-use clap::Parser;
 use crate::commands::{Cli, GitXCommand};
 use crate::core::GitRepo;
 use crate::forwarding::forward_to_git;
+use anyhow::Result;
+use clap::Parser;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 fn main() -> Result<()> {
@@ -36,13 +36,25 @@ fn main() -> Result<()> {
                 renderer.render(&commits);
             }
         }
-        Some(GitXCommand::Compare { branch1, branch2, detail }) => {
+        Some(GitXCommand::Compare {
+            branch1,
+            branch2,
+            detail,
+        }) => {
             let repo = GitRepo::open_default()?;
             let result = repo.compare(&branch1, &branch2)?;
             println!("--- [ GitX Comparison ] ---");
             println!("Merge Base: {}", result.base_hash);
-            println!("Unique to {}: {} commits", branch1, result.unique_to_a.len());
-            println!("Unique to {}: {} commits", branch2, result.unique_to_b.len());
+            println!(
+                "Unique to {}: {} commits",
+                branch1,
+                result.unique_to_a.len()
+            );
+            println!(
+                "Unique to {}: {} commits",
+                branch2,
+                result.unique_to_b.len()
+            );
             if detail {
                 for c in &result.unique_to_a {
                     println!("[{}] - {} - {}", &c.hash[..7], c.author, c.subject);
@@ -54,10 +66,40 @@ fn main() -> Result<()> {
             // Resolve ref and scroll to it in the full tree
             tui::run_tree_explorer(repo, None, Some(reference))?;
         }
-        Some(GitXCommand::Timeline) => {
-            println!("Timeline playback mode is coming soon in v0.2.0");
+        Some(GitXCommand::Timeline {
+            author,
+            message,
+            branch,
+            limit,
+            merges,
+            no_merges,
+            cli,
+        }) => {
+            let repo = GitRepo::open_default()?;
+            let filter = crate::core::CommitFilter {
+                author,
+                message,
+                branch,
+                limit,
+                only_merges: merges,
+                no_merges,
+                ..Default::default()
+            };
+
+            if cli {
+                let commits = repo.filter_commits_ext(filter)?;
+                let mut renderer = crate::utils::graph_renderer::GraphRenderer::new();
+                renderer.render(&commits);
+            } else {
+                // TUI timeline mode (Full interactive view)
+                println!("Interactive TUI timeline is coming in v0.2.0. Use --cli for now.");
+            }
         }
-        Some(GitXCommand::Undo { subcommand, yes, dry_run }) => {
+        Some(GitXCommand::Undo {
+            subcommand,
+            yes,
+            dry_run,
+        }) => {
             let repo = GitRepo::open_default()?;
             crate::commands::undo::handle_undo(repo, subcommand, yes, dry_run)?;
         }

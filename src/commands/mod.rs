@@ -37,14 +37,12 @@ pub enum GitXCommand {
         detail: bool,
     },
     /// Jump to a specific commit, tag, or branch
-    Jump {
-        reference: String,
-    },
+    Jump { reference: String },
     /// Undo recent changes safely
     Undo {
         #[command(subcommand)]
         subcommand: UndoSubcommand,
-        
+
         /// Skip confirmation and proceed (be careful!)
         #[arg(short, long)]
         yes: bool,
@@ -53,8 +51,36 @@ pub enum GitXCommand {
         #[arg(short, long)]
         dry_run: bool,
     },
-    /// Sequential commit history viewer (MVP Stub)
-    Timeline,
+    /// Interactive or CLI timeline view of commit history
+    Timeline {
+        /// Filter commits by author
+        #[arg(short, long)]
+        author: Option<String>,
+
+        /// Filter commits by commit subject/message substring
+        #[arg(short, long)]
+        message: Option<String>,
+
+        /// Focus on a branch or ref
+        #[arg(short, long)]
+        branch: Option<String>,
+
+        /// Limit number of commits shown
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+
+        /// Show only merge commits
+        #[arg(long, conflicts_with = "no_merges")]
+        merges: bool,
+
+        /// Hide merge commits
+        #[arg(long, conflicts_with = "merges")]
+        no_merges: bool,
+
+        /// Use plain CLI timeline output (default for now)
+        #[arg(short, long, default_value = "true")]
+        cli: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -91,5 +117,5 @@ pub enum UndoSubcommand {
         /// Also remove untracked files
         #[arg(short, long)]
         clean_untracked: bool,
-    }
+    },
 }

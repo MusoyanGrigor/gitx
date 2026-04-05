@@ -1,3 +1,5 @@
+use crate::core::GitRepo;
+use crate::models::{CommitInfo, LabelInfo};
 use anyhow::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
@@ -13,8 +15,6 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::{io, time::Duration};
-use crate::core::GitRepo;
-use crate::models::{CommitInfo, LabelInfo};
 
 fn format_timestamp(ts: i64) -> String {
     // Convert unix epoch to a simple UTC date-time string without external crate
@@ -29,22 +29,37 @@ fn format_timestamp(ts: i64) -> String {
     loop {
         let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
         let ydays = if leap { 366 } else { 365 };
-        if d < ydays { break; }
+        if d < ydays {
+            break;
+        }
         d -= ydays;
         y += 1;
     }
     let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-    let mdays = [31u32, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mdays = [
+        31u32,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut mo = 1u32;
     for md in &mdays {
-        if d < *md { break; }
+        if d < *md {
+            break;
+        }
         d -= *md;
         mo += 1;
     }
     format!("{:04}-{:02}-{:02} {:02}:{:02} UTC", y, mo, d + 1, h, m)
 }
-
-
 
 // --- [ Style Constants ] ---
 const COLOR_HEAD: Color = Color::Cyan;
@@ -54,7 +69,11 @@ const COLOR_TAG: Color = Color::Yellow;
 const COLOR_HASH: Color = Color::DarkGray;
 const COLOR_ERROR: Color = Color::LightRed;
 
-pub fn run_tree_explorer(repo: GitRepo, filter: Option<String>, jump_ref: Option<String>) -> Result<()> {
+pub fn run_tree_explorer(
+    repo: GitRepo,
+    filter: Option<String>,
+    jump_ref: Option<String>,
+) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -131,18 +150,34 @@ impl App {
     }
 
     fn next(&mut self) {
-        if self.commits.is_empty() { return; }
+        if self.commits.is_empty() {
+            return;
+        }
         let i = match self.state.selected() {
-            Some(i) => if i >= self.commits.len() - 1 { 0 } else { i + 1 },
+            Some(i) => {
+                if i >= self.commits.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
             None => 0,
         };
         self.state.select(Some(i));
     }
 
     fn previous(&mut self) {
-        if self.commits.is_empty() { return; }
+        if self.commits.is_empty() {
+            return;
+        }
         let i = match self.state.selected() {
-            Some(i) => if i == 0 { self.commits.len() - 1 } else { i - 1 },
+            Some(i) => {
+                if i == 0 {
+                    self.commits.len() - 1
+                } else {
+                    i - 1
+                }
+            }
             None => 0,
         };
         self.state.select(Some(i));
@@ -155,15 +190,23 @@ impl App {
     fn jump_to_ref(&mut self, reference: &str) {
         match self.repo.resolve_ref(reference) {
             Ok(hash) => {
-                if let Some(index) = self.commits.iter().position(|c| c.hash == hash || c.hash.starts_with(&hash)) {
+                if let Some(index) = self
+                    .commits
+                    .iter()
+                    .position(|c| c.hash == hash || c.hash.starts_with(&hash))
+                {
                     self.state.select(Some(index));
                     self.status_message = Some((format!("Jumped to {}", &hash[..7]), Color::Gray));
                 } else {
-                    self.status_message = Some((format!("Ref resolved to {} but not in current list", &hash[..7]), COLOR_ERROR));
+                    self.status_message = Some((
+                        format!("Ref resolved to {} but not in current list", &hash[..7]),
+                        COLOR_ERROR,
+                    ));
                 }
             }
             Err(_) => {
-                self.status_message = Some((format!("Reference '{}' not found", reference), COLOR_ERROR));
+                self.status_message =
+                    Some((format!("Reference '{}' not found", reference), COLOR_ERROR));
             }
         }
     }
@@ -197,12 +240,18 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                     },
                     InputMode::Search => match key.code {
                         KeyCode::Enter => {
-                            app.active_filter = if app.input_buffer.is_empty() { None } else { Some(app.input_buffer.clone()) };
+                            app.active_filter = if app.input_buffer.is_empty() {
+                                None
+                            } else {
+                                Some(app.input_buffer.clone())
+                            };
                             let _ = app.refresh_commits();
                             app.input_mode = InputMode::Normal;
                         }
                         KeyCode::Char(c) => app.input_buffer.push(c),
-                        KeyCode::Backspace => { app.input_buffer.pop(); }
+                        KeyCode::Backspace => {
+                            app.input_buffer.pop();
+                        }
                         KeyCode::Esc => app.input_mode = InputMode::Normal,
                         _ => {}
                     },
@@ -213,10 +262,12 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                             app.input_mode = InputMode::Normal;
                         }
                         KeyCode::Char(c) => app.input_buffer.push(c),
-                        KeyCode::Backspace => { app.input_buffer.pop(); }
+                        KeyCode::Backspace => {
+                            app.input_buffer.pop();
+                        }
                         KeyCode::Esc => app.input_mode = InputMode::Normal,
                         _ => {}
-                    }
+                    },
                 }
             }
         }
@@ -231,13 +282,11 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     let body_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints(
-            if app.detail_visible {
-                [Constraint::Percentage(50), Constraint::Percentage(50)]
-            } else {
-                [Constraint::Percentage(100), Constraint::Percentage(0)]
-            }
-        )
+        .constraints(if app.detail_visible {
+            [Constraint::Percentage(50), Constraint::Percentage(50)]
+        } else {
+            [Constraint::Percentage(100), Constraint::Percentage(0)]
+        })
         .split(main_chunks[0]);
 
     render_commit_list(f, app, body_chunks[0]);
@@ -250,31 +299,49 @@ fn ui(f: &mut Frame, app: &mut App) {
 }
 
 fn render_commit_list(f: &mut Frame, app: &mut App, area: Rect) {
-    let items: Vec<ListItem> = app.commits.iter().map(|c| {
-        let hash_span = Span::styled(
-            format!("[{}] ", if c.hash.len() > 7 { &c.hash[..7] } else { &c.hash }),
-            Style::default().fg(COLOR_HASH)
-        );
-        
-        let mut spans = vec![hash_span];
-        
-        for label in &c.labels {
-            let (text, color) = match label {
-                LabelInfo::Head(n) => (n, COLOR_HEAD),
-                LabelInfo::LocalBranch(n) => (n, COLOR_LOCAL_BRANCH),
-                LabelInfo::RemoteBranch(n) => (n, COLOR_REMOTE_BRANCH),
-                LabelInfo::Tag(n) => (n, COLOR_TAG),
-            };
-            spans.push(Span::styled(format!("({}) ", text), Style::default().fg(color).add_modifier(Modifier::BOLD)));
-        }
+    let items: Vec<ListItem> = app
+        .commits
+        .iter()
+        .map(|c| {
+            let hash_span = Span::styled(
+                format!(
+                    "[{}] ",
+                    if c.hash.len() > 7 {
+                        &c.hash[..7]
+                    } else {
+                        &c.hash
+                    }
+                ),
+                Style::default().fg(COLOR_HASH),
+            );
 
-        spans.push(Span::raw(&c.subject));
-        
-        ListItem::new(Line::from(spans))
-    }).collect();
+            let mut spans = vec![hash_span];
+
+            for label in &c.labels {
+                let (text, color) = match label {
+                    LabelInfo::Head(n) => (n, COLOR_HEAD),
+                    LabelInfo::LocalBranch(n) => (n, COLOR_LOCAL_BRANCH),
+                    LabelInfo::RemoteBranch(n) => (n, COLOR_REMOTE_BRANCH),
+                    LabelInfo::Tag(n) => (n, COLOR_TAG),
+                };
+                spans.push(Span::styled(
+                    format!("({}) ", text),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ));
+            }
+
+            spans.push(Span::raw(&c.subject));
+
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(" Commit Tree "))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Commit Tree "),
+        )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .highlight_symbol(">> ");
 
@@ -285,20 +352,38 @@ fn render_commit_detail(f: &mut Frame, app: &mut App, area: Rect) {
     let i = app.state.selected().unwrap_or(0);
     if let Some(commit) = app.commits.get(i) {
         let text = vec![
-            Line::from(vec![Span::styled("Hash:   ", Style::default().fg(Color::Gray)), Span::raw(&commit.hash)]),
-            Line::from(vec![Span::styled("Author: ", Style::default().fg(Color::Gray)), Span::raw(&commit.author)]),
-            Line::from(vec![Span::styled("Date:   ", Style::default().fg(Color::Gray)), Span::raw(format_timestamp(commit.date))]),
-
+            Line::from(vec![
+                Span::styled("Hash:   ", Style::default().fg(Color::Gray)),
+                Span::raw(&commit.hash),
+            ]),
+            Line::from(vec![
+                Span::styled("Author: ", Style::default().fg(Color::Gray)),
+                Span::raw(&commit.author),
+            ]),
+            Line::from(vec![
+                Span::styled("Date:   ", Style::default().fg(Color::Gray)),
+                Span::raw(format_timestamp(commit.date)),
+            ]),
             Line::from(""),
-            Line::from(vec![Span::styled("Subject: ", Style::default().add_modifier(Modifier::BOLD))]),
+            Line::from(vec![Span::styled(
+                "Subject: ",
+                Style::default().add_modifier(Modifier::BOLD),
+            )]),
             Line::from(commit.subject.as_str()),
             Line::from(""),
-            Line::from(vec![Span::styled("Body:", Style::default().add_modifier(Modifier::BOLD))]),
+            Line::from(vec![Span::styled(
+                "Body:",
+                Style::default().add_modifier(Modifier::BOLD),
+            )]),
             Line::from(commit.body.as_deref().unwrap_or("[No body text]")),
         ];
 
         let p = Paragraph::new(text)
-            .block(Block::default().borders(Borders::ALL).title(" Commit Detail "))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Commit Detail "),
+            )
             .wrap(Wrap { trim: true });
         f.render_widget(p, area);
     }
@@ -312,11 +397,17 @@ fn render_status_bar(f: &mut Frame, app: &mut App, area: Rect) {
             } else if let Some(filter) = &app.active_filter {
                 (format!("Filter: {}", filter), Color::Cyan)
             } else {
-                ("q:quit | /:filter | J:jump | d:detail | Esc:clear filter".to_string(), Color::DarkGray)
+                (
+                    "q:quit | /:filter | J:jump | d:detail | Esc:clear filter".to_string(),
+                    Color::DarkGray,
+                )
             }
         }
         InputMode::Search => (format!("Search: {}_", app.input_buffer), Color::Yellow),
-        InputMode::Jump => (format!("Jump to (branch/tag/hash): {}_", app.input_buffer), Color::Magenta),
+        InputMode::Jump => (
+            format!("Jump to (branch/tag/hash): {}_", app.input_buffer),
+            Color::Magenta,
+        ),
     };
 
     let p = Paragraph::new(prompt)

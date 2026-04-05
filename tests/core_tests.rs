@@ -1,5 +1,5 @@
-use tempfile::tempdir;
 use git2::Repository;
+use tempfile::tempdir;
 
 #[test]
 fn test_repo_open_fail_non_git() {
