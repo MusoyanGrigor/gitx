@@ -25,7 +25,7 @@ fn main() -> Result<()> {
         Some(GitXCommand::Tree { filter, cli, limit }) => {
             let repo = GitRepo::open_default()?;
             if !cli {
-                tui::run_tree_explorer(repo, filter)?;
+                tui::run_tree_explorer(repo, filter, None)?;
             } else {
                 let commits = if let Some(ref q) = filter {
                     repo.filter_commits(q)?
@@ -51,8 +51,8 @@ fn main() -> Result<()> {
         }
         Some(GitXCommand::Jump { reference }) => {
             let repo = GitRepo::open_default()?;
-            // Simple jump: open tree and find ref
-            tui::run_tree_explorer(repo, Some(reference))?;
+            // Resolve ref and scroll to it in the full tree
+            tui::run_tree_explorer(repo, None, Some(reference))?;
         }
         Some(GitXCommand::Timeline) => {
             println!("Timeline playback mode is coming soon in v0.2.0");

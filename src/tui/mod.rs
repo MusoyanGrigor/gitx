@@ -16,6 +16,36 @@ use std::{io, time::Duration};
 use crate::core::GitRepo;
 use crate::models::{CommitInfo, LabelInfo};
 
+fn format_timestamp(ts: i64) -> String {
+    // Convert unix epoch to a simple UTC date-time string without external crate
+    let secs = ts;
+    let days = secs / 86400;
+    let rem = secs % 86400;
+    let h = rem / 3600;
+    let m = (rem % 3600) / 60;
+    // Days since epoch -> year/month/day (rough Gregorian)
+    let mut y = 1970u32;
+    let mut d = days as u32;
+    loop {
+        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+        let ydays = if leap { 366 } else { 365 };
+        if d < ydays { break; }
+        d -= ydays;
+        y += 1;
+    }
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let mdays = [31u32, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut mo = 1u32;
+    for md in &mdays {
+        if d < *md { break; }
+        d -= *md;
+        mo += 1;
+    }
+    format!("{:04}-{:02}-{:02} {:02}:{:02} UTC", y, mo, d + 1, h, m)
+}
+
+
+
 // --- [ Style Constants ] ---
 const COLOR_HEAD: Color = Color::Cyan;
 const COLOR_LOCAL_BRANCH: Color = Color::Green;
@@ -24,7 +54,7 @@ const COLOR_TAG: Color = Color::Yellow;
 const COLOR_HASH: Color = Color::DarkGray;
 const COLOR_ERROR: Color = Color::LightRed;
 
-pub fn run_tree_explorer(repo: GitRepo, filter: Option<String>) -> Result<()> {
+pub fn run_tree_explorer(repo: GitRepo, filter: Option<String>, jump_ref: Option<String>) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -32,6 +62,9 @@ pub fn run_tree_explorer(repo: GitRepo, filter: Option<String>) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(repo, filter)?;
+    if let Some(ref r) = jump_ref {
+        app.jump_to_ref(r);
+    }
     let res = run_app(&mut terminal, &mut app);
 
     disable_raw_mode()?;
@@ -254,7 +287,8 @@ fn render_commit_detail(f: &mut Frame, app: &mut App, area: Rect) {
         let text = vec![
             Line::from(vec![Span::styled("Hash:   ", Style::default().fg(Color::Gray)), Span::raw(&commit.hash)]),
             Line::from(vec![Span::styled("Author: ", Style::default().fg(Color::Gray)), Span::raw(&commit.author)]),
-            Line::from(vec![Span::styled("TS:     ", Style::default().fg(Color::Gray)), Span::raw(commit.date.to_string())]),
+            Line::from(vec![Span::styled("Date:   ", Style::default().fg(Color::Gray)), Span::raw(format_timestamp(commit.date))]),
+
             Line::from(""),
             Line::from(vec![Span::styled("Subject: ", Style::default().add_modifier(Modifier::BOLD))]),
             Line::from(commit.subject.as_str()),

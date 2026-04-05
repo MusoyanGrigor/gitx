@@ -31,23 +31,70 @@ impl GitRepo {
 
     pub fn filter_commits(&self, query: &str) -> Result<Vec<CommitInfo>> {
         let mut walk = self.repo.revwalk()?;
-        walk.set_sorting(Sort::TIME)?;
+        walk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL)?;
         walk.push_head()?;
 
-        let mut results = Vec::new();
+        let mut matched_oids = Vec::new();
         let query_lower = query.to_lowercase();
+        let mut matched_set = std::collections::HashSet::new();
+
+        // 1. Find all matching commits first
         for id in walk {
             let id = id?;
             let commit = self.repo.find_commit(id)?;
-            let info = self.convert_commit(&commit)?;
-            if info.subject.to_lowercase().contains(&query_lower) || 
-               info.author.to_lowercase().contains(&query_lower) ||
-               info.hash.to_lowercase().starts_with(&query_lower) {
-                results.push(info);
-                if results.len() >= 100 { break; }
+            let subject = commit.summary().unwrap_or("").to_lowercase();
+            let author = commit.author().name().unwrap_or("").to_lowercase();
+            let hash = id.to_string().to_lowercase();
+
+            if subject.contains(&query_lower) || 
+               author.contains(&query_lower) ||
+               hash.starts_with(&query_lower) {
+                matched_oids.push(id);
+                matched_set.insert(id);
+                if matched_oids.len() >= 100 { break; }
             }
         }
-        Ok(results)
+
+        if matched_oids.is_empty() { return Ok(Vec::new()); }
+
+        // 2. Convert and simplify: for each match, find its next visible ancestors
+        let mut final_results = Vec::new();
+        for oid in matched_oids {
+            let commit = self.repo.find_commit(oid)?;
+            let mut info = self.convert_commit(&commit)?;
+            
+            let mut simplified_parents = Vec::new();
+            for p_oid in commit.parent_ids() {
+                if let Some(ancestor) = self.find_visible_ancestor(p_oid, &matched_set) {
+                    if !simplified_parents.contains(&ancestor) {
+                        simplified_parents.push(ancestor);
+                    }
+                }
+            }
+            info.parents = simplified_parents;
+            final_results.push(info);
+        }
+
+        Ok(final_results)
+    }
+
+    fn find_visible_ancestor(&self, start_oid: Oid, matched_set: &std::collections::HashSet<Oid>) -> Option<String> {
+        if matched_set.contains(&start_oid) {
+            return Some(start_oid.to_string());
+        }
+
+        let mut walk = self.repo.revwalk().ok()?;
+        let _ = walk.set_sorting(Sort::TOPOLOGICAL);
+        walk.push(start_oid).ok()?;
+
+        for id in walk {
+            if let Ok(id) = id {
+                if matched_set.contains(&id) {
+                    return Some(id.to_string());
+                }
+            }
+        }
+        None
     }
 
     pub fn resolve_ref(&self, reference: &str) -> Result<String> {
