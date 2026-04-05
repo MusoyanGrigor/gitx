@@ -30,8 +30,21 @@ impl TreeStyle {
         }
     }
 
+    pub fn hash() -> ContentStyle {
+        ContentStyle::new().with(Color::AnsiValue(242))
+    }
+
     pub fn subject() -> ContentStyle {
         ContentStyle::new().with(Color::White).attribute(Attribute::Bold)
+    }
+
+    pub fn metadata() -> ContentStyle {
+        // Very dim gray for metadata
+        ContentStyle::new().with(Color::AnsiValue(238))
+    }
+
+    pub fn separator() -> ContentStyle {
+        ContentStyle::new().with(Color::AnsiValue(236))
     }
 
     // --- Badges ---
@@ -50,6 +63,10 @@ impl TreeStyle {
 
     pub fn tag_badge() -> ContentStyle {
         ContentStyle::new().with(Color::Yellow)
+    }
+
+    pub fn ref_divider() -> ContentStyle {
+        ContentStyle::new().with(Color::AnsiValue(236))
     }
 }
 
